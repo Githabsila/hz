@@ -72,6 +72,22 @@ body:not(.src-2gis) .gis-only { display: none !important; }
 .card .row a, .card .row button { font-size: 13px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px;
   text-decoration: none; color: var(--text); background: var(--bg); }
 .card .row a.call { background: var(--ok); border-color: var(--ok); color: #fff; }
+.contact { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--bg); font-size: 14px; }
+.contact .row { margin-top: 6px; }
+.contact.none { color: var(--muted); font-size: 13px; }
+.card .row a.msg { color: #fff; border-color: transparent; font-weight: 600; }
+.card .row a.msg small { font-weight: 400; opacity: .85; }
+.msg-telegram { background: #229ed9 !important; } .msg-whatsapp { background: #1fa855 !important; }
+.msg-vk { background: #0077ff !important; } .msg-instagram { background: #d6249f !important; }
+.msg-viber { background: #7360f2 !important; } .msg-ok { background: #ee8208 !important; }
+.msg-facebook { background: #1877f2 !important; } .msg-youtube { background: #e62117 !important; }
+.msg-other, .msg-email { background: #5b6472 !important; }
+.card .row.links { margin-top: 6px; }
+.card .row.links a { font-size: 12px; padding: 3px 8px; }
+#toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(20px);
+  background: #1b1f24; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 14px; opacity: 0;
+  transition: .2s; pointer-events: none; z-index: 2000; max-width: calc(100% - 32px); text-align: center; }
+#toast.show { opacity: 1; transform: translateX(-50%); }
 .card textarea { width: 100%; margin-top: 8px; font-size: 13px; resize: vertical; min-height: 34px; }
 .tag { display: inline-block; font-size: 12px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); margin-right: 4px; }
 .tag.site { color: var(--bad); border-color: var(--bad); }

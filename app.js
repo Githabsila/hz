@@ -49,7 +49,30 @@ const QUERIES_2GIS = {
   allshops: ['Магазины'],
   allcraft: ['Мастерские', 'Изготовление на заказ'],
 };
-const SOCIAL_2GIS = ['vkontakte', 'instagram', 'telegram', 'whatsapp', 'viber', 'facebook', 'odnoklassniki', 'youtube', 'twitter'];
+// Типы контактов 2ГИС -> наши типы мессенджеров/соцсетей.
+const SOCIAL_2GIS = { telegram: 'telegram', whatsapp: 'whatsapp', viber: 'viber', vkontakte: 'vk', instagram: 'instagram', odnoklassniki: 'ok', facebook: 'facebook', youtube: 'youtube', twitter: 'other' };
+// Теги OSM с мессенджерами/соцсетями.
+const SOCIAL_OSM = {
+  telegram: ['contact:telegram', 'telegram'], whatsapp: ['contact:whatsapp', 'whatsapp'], viber: ['contact:viber', 'viber'],
+  vk: ['contact:vk', 'vk'], instagram: ['contact:instagram', 'instagram'], ok: ['contact:ok', 'ok'],
+  facebook: ['contact:facebook', 'facebook'], youtube: ['contact:youtube'],
+};
+// Как подписать кнопку и как собрать ссылку из ника/номера.
+const MESSENGERS = {
+  telegram: { label: 'Telegram', base: 'https://t.me/' },
+  whatsapp: { label: 'WhatsApp', base: 'https://wa.me/' },
+  viber: { label: 'Viber', base: 'viber://chat?number=%2B' },
+  vk: { label: 'VK', base: 'https://vk.com/' },
+  instagram: { label: 'Instagram', base: 'https://instagram.com/' },
+  ok: { label: 'Одноклассники', base: 'https://ok.ru/' },
+  facebook: { label: 'Facebook', base: 'https://facebook.com/' },
+  youtube: { label: 'YouTube', base: 'https://youtube.com/' },
+  other: { label: 'Соцсеть', base: 'https://' },
+};
+const TYPE_BY_DOMAIN = [
+  [/t\.me\/|telegram/i, 'telegram'], [/wa\.me\/|whatsapp/i, 'whatsapp'], [/vk\.com|vk\.link|vkontakte/i, 'vk'],
+  [/instagram/i, 'instagram'], [/ok\.ru/i, 'ok'], [/facebook/i, 'facebook'], [/youtu/i, 'youtube'], [/viber/i, 'viber'],
+];
 
 // Человекочитаемые названия частых типов.
 const TYPE_RU = {
@@ -139,7 +162,7 @@ function saveSrc() {
 ['#optSource', '#gisKey', '#gisPages'].forEach(id => $(id).addEventListener('change', saveSrc));
 saveSrc();
 
-const OPTS = ['optNoSite', 'optSocialOk', 'optPhone', 'optNoChains', 'optHideRejected'];
+const OPTS = ['optNoSite', 'optSocialOk', 'optPhone', 'optMsg', 'optNoChains', 'optHideRejected'];
 const savedOpts = store.get('leads.opts', {});
 for (const id of OPTS) {
   if (id in savedOpts) $('#' + id).checked = savedOpts[id];
@@ -315,11 +338,9 @@ function normalize(el) {
   const typeKey = ['shop', 'amenity', 'craft', 'office', 'healthcare', 'leisure', 'tourism'].find(k => t[k]);
   const typeVal = typeKey ? t[typeKey] : '';
   const site = t.website || t['contact:website'] || t.url || '';
-  const social = [
-    t['contact:vk'] || t.vk, t['contact:instagram'] || t.instagram, t['contact:telegram'] || t.telegram,
-    t['contact:facebook'] || t.facebook, t['contact:ok'], t['contact:whatsapp'],
-  ].filter(Boolean);
   const isSocialSite = !!site && SOCIAL_SITE_RE.test(site);
+  const social = Object.entries(SOCIAL_OSM).map(([type, keys]) => socialLink(type, keys.map(k => t[k]).find(Boolean)));
+  if (isSocialSite) social.push(socialLink('other', site));
   const street = [t['addr:street'], t['addr:housenumber']].filter(Boolean).join(', ');
   const address = [t['addr:city'], street].filter(Boolean).join(', ') || t['addr:full'] || '';
   return {
@@ -330,7 +351,7 @@ function normalize(el) {
     phone: (t.phone || t['contact:phone'] || t['contact:mobile'] || t['phone:mobile'] || '').split(';')[0].trim(),
     email: t.email || t['contact:email'] || '',
     hours: t.opening_hours || '',
-    site, social, isSocialSite,
+    site, social: uniqSocial(social), isSocialSite,
     chain: !!(t.brand || t['brand:wikidata'] || t['operator:wikidata']),
   };
 }
@@ -362,10 +383,45 @@ function normalize2gis(it) {
     email: emailC ? (emailC.value || emailC.text || '') : '',
     hours,
     site,
-    social: contacts.filter(c => SOCIAL_2GIS.includes(c.type)).map(c => c.url || c.value).filter(Boolean),
+    social: uniqSocial([
+      ...contacts.filter(c => SOCIAL_2GIS[c.type]).map(c => socialLink(SOCIAL_2GIS[c.type], c.url || c.value || c.text)),
+      SOCIAL_SITE_RE.test(site) ? socialLink('other', site) : null,
+    ]),
     isSocialSite: !!site && SOCIAL_SITE_RE.test(site),
     chain: (it.org?.branch_count || 1) >= 3,
   };
+}
+
+// Собирает ссылку на мессенджер/соцсеть из того, что лежит в базе: URL, @ника или номера.
+function socialLink(type, raw) {
+  let v = String(raw || '').split(';')[0].trim();
+  if (!v) return null;
+  if (/^(https?:|viber:|tg:)/i.test(v)) { /* уже ссылка */ }
+  else if (/^[\w-]+(\.[\w-]+)+\//.test(v)) v = 'https://' + v;
+  else if (type === 'whatsapp' || type === 'viber') { const n = waNumber(v); if (n.length < 10) return null; v = MESSENGERS[type].base + n; }
+  else v = MESSENGERS[type].base + v.replace(/^@/, '');
+  if (type === 'other') type = TYPE_BY_DOMAIN.find(([re]) => re.test(v))?.[1] || 'other';
+  return { type, url: v };
+}
+
+function uniqSocial(list) {
+  const seen = new Set();
+  return list.filter(s => s && !seen.has(s.url) && seen.add(s.url));
+}
+
+// Российский мобильный (+7 9xx…) — на него обычно есть WhatsApp/Telegram.
+const isMobile = phone => /^79\d{9}$/.test(waNumber(phone || ''));
+
+// Куда можно написать: найденные в базе мессенджеры + догадки по мобильному номеру.
+function messengers(x) {
+  const list = [...x.social];
+  if (isMobile(x.phone)) {
+    const n = waNumber(x.phone);
+    if (!list.some(s => s.type === 'whatsapp')) list.push({ type: 'whatsapp', url: 'https://wa.me/' + n, guess: true });
+    if (!list.some(s => s.type === 'telegram')) list.push({ type: 'telegram', url: 'https://t.me/+' + n, guess: true });
+  }
+  const order = Object.keys(MESSENGERS);
+  return list.sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type) || !!a.guess - !!b.guess);
 }
 
 function hasRealSite(x, socialOk) {
@@ -375,11 +431,12 @@ function hasRealSite(x, socialOk) {
 
 function filtered() {
   const noSite = $('#optNoSite').checked, socialOk = $('#optSocialOk').checked;
-  const phone = $('#optPhone').checked, noChains = $('#optNoChains').checked;
+  const phone = $('#optPhone').checked, canWrite = $('#optMsg').checked, noChains = $('#optNoChains').checked;
   const hideRej = $('#optHideRejected').checked, st = $('#optStatus').value;
   return lastResults.filter(x => {
     if (noSite && hasRealSite(x, socialOk)) return false;
     if (phone && !x.phone) return false;
+    if (canWrite && !x.social.length && !isMobile(x.phone) && !x.email) return false;
     if (noChains && x.chain) return false;
     const s = crm[x.id]?.status || 'new';
     if (hideRej && s === 'rejected' && st !== 'rejected') return false;
@@ -389,7 +446,7 @@ function filtered() {
 }
 
 // Чем больше контактов — тем «теплее» лид (до него проще достучаться).
-function score(x) { return (x.phone ? 3 : 0) + (x.social.length || x.isSocialSite ? 2 : 0) + (x.email ? 1 : 0) + (x.hours ? 1 : 0); }
+function score(x) { return (x.social.length ? 4 : 0) + (x.phone ? 3 : 0) + (isMobile(x.phone) ? 1 : 0) + (x.email ? 1 : 0) + (x.hours ? 1 : 0); }
 
 // ---------- Отрисовка ----------
 
@@ -402,19 +459,26 @@ function fillTpl(x) {
     .replaceAll('{name}', x.name).replaceAll('{category}', x.category.toLowerCase()).replaceAll('{address}', x.address);
 }
 
+// Блок «Куда писать»: мессенджеры, соцсети, email, телефон.
+function contactsHtml(x) {
+  const parts = [];
+  for (const m of messengers(x)) {
+    let href = m.url;
+    if (m.type === 'whatsapp' && href.startsWith('https://wa.me/') && !href.includes('?')) href += '?text=' + encodeURIComponent(fillTpl(x));
+    const label = MESSENGERS[m.type].label + (m.guess ? ' <small>по номеру</small>' : '');
+    const title = m.guess ? 'В базе не указан — пробуем по мобильному номеру, может не сработать' : m.url;
+    parts.push(`<a class="msg msg-${m.type}" data-act="msg" href="${esc(href)}" title="${esc(title)}" target="_blank" rel="noopener">${label}</a>`);
+  }
+  if (x.email) parts.push(`<a class="msg msg-email" data-act="msg" href="mailto:${esc(x.email)}?subject=${encodeURIComponent('Сайт для ' + x.name)}&body=${encodeURIComponent(fillTpl(x))}">✉ ${esc(x.email)}</a>`);
+  if (x.phone) parts.push(`<a class="call" href="tel:${esc(digits(x.phone))}">📞 ${esc(x.phone)}</a>`);
+  if (!parts.length) return '<div class="contact none">Контактов в базе нет — откройте карточку в 2ГИС или Яндексе ниже, там часто есть телефон и соцсети.</div>';
+  return `<div class="contact"><b>Куда писать:</b><div class="row">${parts.join('')}</div></div>`;
+}
+
 function linksHtml(x) {
   const q = encodeURIComponent(x.name + (x.address ? ' ' + x.address : ''));
   const parts = [];
-  if (x.phone) {
-    parts.push(`<a class="call" href="tel:${esc(digits(x.phone))}">📞 ${esc(x.phone)}</a>`);
-    parts.push(`<a href="https://wa.me/${waNumber(x.phone)}?text=${encodeURIComponent(fillTpl(x))}" target="_blank" rel="noopener">WhatsApp</a>`);
-  }
-  if (x.email) parts.push(`<a href="mailto:${esc(x.email)}?subject=${encodeURIComponent('Сайт для ' + x.name)}&body=${encodeURIComponent(fillTpl(x))}">✉ Email</a>`);
-  for (const s of x.social) {
-    const href = /^https?:/.test(s) ? s : (s.startsWith('@') ? 'https://t.me/' + s.slice(1) : 'https://' + s.replace(/^\/+/, ''));
-    parts.push(`<a href="${esc(href)}" target="_blank" rel="noopener">Соцсеть</a>`);
-  }
-  if (x.site) parts.push(`<a href="${esc(/^https?:/.test(x.site) ? x.site : 'https://' + x.site)}" target="_blank" rel="noopener">${x.isSocialSite ? 'Соцсеть' : '🌐 Сайт'}</a>`);
+  if (x.site && !x.isSocialSite) parts.push(`<a href="${esc(/^https?:/.test(x.site) ? x.site : 'https://' + x.site)}" target="_blank" rel="noopener">🌐 Сайт</a>`);
   parts.push(`<a href="https://yandex.ru/maps/?text=${q}&ll=${x.lng},${x.lat}&z=17" target="_blank" rel="noopener">Яндекс</a>`);
   parts.push(`<a href="${x.gisUrl || 'https://2gis.ru/search/' + q}" target="_blank" rel="noopener">2ГИС</a>`);
   parts.push(`<a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank" rel="noopener">Google</a>`);
@@ -438,7 +502,7 @@ function render(fresh) {
   cluster.clearLayers();
   for (const x of items) {
     const m = L.marker([x.lat, x.lng]);
-    m.bindPopup(() => `<b>${esc(x.name)}</b><br>${esc(x.category)}<br>${esc(x.address)}<br>${x.phone ? esc(x.phone) + '<br>' : ''}<a data-goto="${x.id}">Открыть в списке →</a>`);
+    m.bindPopup(() => `<b>${esc(x.name)}</b><br>${esc(x.category)}<br>${esc(x.address)}<br>${x.phone ? esc(x.phone) + '<br>' : ''}${messengers(x).filter(m => !m.guess).map(m => MESSENGERS[m.type].label).join(', ')}${x.social.length ? '<br>' : ''}<a data-goto="${x.id}">Открыть в списке →</a>`);
     cluster.addLayer(m);
   }
 
@@ -452,7 +516,8 @@ function render(fresh) {
       <h3>${esc(x.name)}</h3>
       <div class="meta">${esc(x.category)}${x.address ? ' · ' + esc(x.address) : ''}</div>
       <div class="meta">${siteTag(x)}${x.hours ? '🕒 ' + esc(x.hours) : ''}</div>
-      <div class="row">${linksHtml(x)}</div>
+      ${contactsHtml(x)}
+      <div class="row links"><span class="meta">Проверить:</span>${linksHtml(x)}</div>
       <div class="row">
         <select data-act="status">${STATUSES.map(s => `<option value="${s.id}" ${s.id === st ? 'selected' : ''}>${s.label}</option>`).join('')}</select>
         <button type="button" data-act="copy">Копировать текст</button>
@@ -483,12 +548,18 @@ $('#list').addEventListener('click', async e => {
   const card = e.target.closest('.card');
   if (!card) return;
   const x = lastResults.find(r => r.id === card.dataset.id);
+  const msg = e.target.closest('[data-act="msg"]');
+  if (msg) {
+    // В Telegram/VK/Instagram нельзя передать текст в ссылке — кладём его в буфер, чтобы просто вставить в чат.
+    if (await copyText(fillTpl(x))) toast('Текст сообщения скопирован — вставьте его в чат');
+    return;
+  }
   if (e.target.dataset.act === 'show') {
     showTab('map');
     map.setView([x.lat, x.lng], 18);
   } else if (e.target.dataset.act === 'copy') {
-    try { await navigator.clipboard.writeText(fillTpl(x)); e.target.textContent = 'Скопировано ✓'; }
-    catch { prompt('Скопируйте текст:', fillTpl(x)); }
+    if (await copyText(fillTpl(x))) e.target.textContent = 'Скопировано ✓';
+    else prompt('Скопируйте текст:', fillTpl(x));
   }
 });
 map.on('popupopen', e => {
@@ -504,13 +575,38 @@ map.on('popupopen', e => {
   });
 });
 
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* старый браузер или нет доступа */ }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;opacity:0';
+  document.body.append(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { /* ignore */ }
+  ta.remove();
+  return ok;
+}
+
+function toast(text) {
+  let el = $('#toast');
+  if (!el) { el = document.createElement('div'); el.id = 'toast'; document.body.append(el); }
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
 // ---------- Экспорт CSV (открывается в Excel / Google Таблицах) ----------
 
 $('#csvBtn').addEventListener('click', () => {
-  const rows = [['Название', 'Категория', 'Адрес', 'Телефон', 'Email', 'Соцсети', 'Сайт', 'Часы работы', 'Статус', 'Заметка', 'Широта', 'Долгота', 'Яндекс Карты']];
+  const rows = [['Название', 'Категория', 'Адрес', 'Телефон', 'Email', 'Telegram', 'WhatsApp', 'VK', 'Instagram', 'Viber', 'Другие соцсети', 'Сайт', 'Часы работы', 'Статус', 'Заметка', 'Широта', 'Долгота', 'Яндекс Карты']];
   for (const x of filtered()) {
     const c = crm[x.id] || {};
-    rows.push([x.name, x.category, x.address, x.phone, x.email, x.social.join(' '), x.site, x.hours,
+    const ms = messengers(x);
+    const col = type => ms.filter(m => m.type === type).map(m => m.url + (m.guess ? ' (по номеру)' : '')).join(' ');
+    const other = ms.filter(m => !['telegram', 'whatsapp', 'vk', 'instagram', 'viber'].includes(m.type)).map(m => m.url).join(' ');
+    rows.push([x.name, x.category, x.address, x.phone, x.email, col('telegram'), col('whatsapp'), col('vk'), col('instagram'), col('viber'), other, x.site, x.hours,
       STATUSES.find(s => s.id === (c.status || 'new')).label, c.note || '', x.lat, x.lng,
       `https://yandex.ru/maps/?text=${encodeURIComponent(x.name)}&ll=${x.lng},${x.lat}&z=17`]);
   }
