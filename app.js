@@ -30,8 +30,8 @@ const CATEGORIES = [
   { id: 'allcraft', label: 'Все мастерские', tags: { craft: '*' } },
 ];
 
-// Поисковые запросы 2ГИС для тех же категорий (2ГИС ищет по рубрикам/тексту, а не по тегам OSM).
-const QUERIES_2GIS = {
+// Поисковые запросы для 2ГИС и Яндекса (они ищут по тексту/рубрикам, а не по тегам OSM).
+const QUERIES = {
   beauty: ['Парикмахерские', 'Салоны красоты', 'Ногтевые студии', 'Барбершопы', 'Массаж', 'Тату-салоны', 'Косметология'],
   auto: ['Автосервисы', 'Шиномонтаж', 'Автомойки', 'Автозапчасти', 'Кузовной ремонт', 'Автоэлектрики'],
   food: ['Кафе', 'Рестораны', 'Быстрое питание', 'Кофейни', 'Бары', 'Доставка еды', 'Суши-бары', 'Шаурма'],
@@ -153,17 +153,21 @@ $('#cats').addEventListener('change', () => store.set('leads.cats', selectedCats
 $('#optStatus').insertAdjacentHTML('beforeend', STATUSES.map(s => `<option value="${s.id}">${s.label}</option>`).join(''));
 
 // Источник данных и ключ 2ГИС (ключ хранится только в этом браузере).
-const src = store.get('leads.src', { source: '2gis', key: '', pages: 5 });
+const storedSrc = store.get('leads.src', {});
+// Яндекс отдаёт 50 фирм за запрос, поэтому по умолчанию хватает одной страницы — бережём дневной лимит.
+const src = { source: 'yandex', key: '', pages: 1, ...storedSrc, ...('yaKey' in storedSrc ? {} : { source: 'yandex', yaKey: '', pages: 1 }) };
 $('#optSource').value = src.source;
 document.querySelector(`input[name=src][value="${src.source}"]`).checked = true;
 $('#gisKey').value = src.key;
+$('#yaKey').value = src.yaKey;
 $('#gisPages').value = src.pages;
 function saveSrc() {
   $('#optSource').value = document.querySelector('input[name=src]:checked').value;
-  store.set('leads.src', { source: $('#optSource').value, key: $('#gisKey').value.trim(), pages: +$('#gisPages').value || 5 });
-  document.body.classList.toggle('src-2gis', $('#optSource').value === '2gis');
+  const source = $('#optSource').value;
+  store.set('leads.src', { source, key: $('#gisKey').value.trim(), yaKey: $('#yaKey').value.trim(), pages: +$('#gisPages').value || 1 });
+  for (const v of ['2gis', 'yandex', 'osm']) document.body.classList.toggle('src-' + v, source === v);
 }
-['#gisKey', '#gisPages'].forEach(id => $(id).addEventListener('change', saveSrc));
+['#gisKey', '#yaKey', '#gisPages'].forEach(id => $(id).addEventListener('change', saveSrc));
 document.querySelectorAll('input[name=src]').forEach(r => r.addEventListener('change', saveSrc));
 saveSrc();
 
@@ -314,31 +318,84 @@ async function search2gis(queries, b, key, maxPages) {
   return out;
 }
 
+// ---------- Запрос к Яндексу (API Поиска по организациям) ----------
+
+// Если браузер не пустил fetch (CORS), дальше ходим через JSONP — Яндекс его поддерживает.
+let yaUseJsonp = false;
+function jsonp(url) {
+  return new Promise((resolve, reject) => {
+    const cb = 'yaCb' + Math.random().toString(36).slice(2);
+    const el = document.createElement('script');
+    const done = () => { delete window[cb]; el.remove(); clearTimeout(timer); };
+    const timer = setTimeout(() => { done(); reject(new Error('Яндекс не ответил')); }, 20000);
+    window[cb] = data => { done(); resolve(data); };
+    el.onerror = () => { done(); reject(new Error('Яндекс недоступен — проверьте ключ и интернет')); };
+    el.src = url + '&callback=' + cb;
+    document.head.append(el);
+  });
+}
+async function yaGet(url) {
+  if (!yaUseJsonp) {
+    try { return await (await fetch(url)).json(); }
+    catch (err) { if (!(err instanceof TypeError)) throw err; yaUseJsonp = true; }
+  }
+  return jsonp(url);
+}
+
+async function searchYandex(queries, b, key, maxPages) {
+  const c = b.getCenter();
+  const spn = `${(b.getEast() - b.getWest()).toFixed(5)},${(b.getNorth() - b.getSouth()).toFixed(5)}`;
+  const out = [];
+  for (const [qi, q] of queries.entries()) {
+    for (let page = 0; page < maxPages; page++) {
+      setStatus(`${q} · ${qi + 1}/${queries.length} · найдено ${out.length}`);
+      const params = new URLSearchParams({
+        apikey: key, text: q, lang: 'ru_RU', type: 'biz', ll: `${c.lng},${c.lat}`, spn, rspn: 1, results: 50, skip: page * 50,
+      });
+      const data = await yaGet('https://search-maps.yandex.ru/v1/?' + params);
+      if (data.statusCode && data.statusCode !== 200) {
+        if (data.statusCode === 403 || data.statusCode === 401) throw new Error('ключ Яндекса не принят или кончился дневной лимит (' + (data.message || data.statusCode) + ')');
+        throw new Error(data.message || 'Яндекс вернул ошибку ' + data.statusCode);
+      }
+      const feats = data.features || [];
+      out.push(...feats);
+      if (feats.length < 50) break;
+    }
+  }
+  return out;
+}
+
 $('#searchBtn').addEventListener('click', runSearch);
 
 async function runSearch() {
   const cats = selectedCats();
   if (!cats.length) { setStatus('Выберите хотя бы одну сферу', true); return; }
   const b = map.getBounds();
-  const use2gis = $('#optSource').value === '2gis';
-  const key = $('#gisKey').value.trim();
-  if (use2gis && !key) { setStatus('Нужен ключ 2ГИС — вставьте его в настройках', true); openSettings(); return; }
-  const queries = [...new Set(cats.flatMap(c => QUERIES_2GIS[c.id] || []))];
-  const pages = Math.max(1, Math.min(20, +$('#gisPages').value || 5));
+  const source = $('#optSource').value;
+  const use2gis = source === '2gis', useYa = source === 'yandex';
+  const key = use2gis ? $('#gisKey').value.trim() : $('#yaKey').value.trim();
+  if ((use2gis || useYa) && !key) {
+    setStatus(`Нужен ключ ${useYa ? 'Яндекса' : '2ГИС'} — вставьте его в настройках`, true);
+    openSettings();
+    return;
+  }
+  const queries = [...new Set(cats.flatMap(c => QUERIES[c.id] || []))];
+  const pages = Math.max(1, Math.min(20, +$('#gisPages').value || 1));
   const area = (b.getNorth() - b.getSouth()) * (b.getEast() - b.getWest());
-  if (!use2gis && area > 1.5 && !confirm('Область очень большая — поиск может занять минуту. Продолжить?')) return;
-  if (use2gis && queries.length * pages > 60 &&
-      !confirm(`До ${queries.length * pages} запросов к 2ГИС — это расходует лимит ключа. Продолжить?`)) return;
+  if (source === 'osm' && area > 1.5 && !confirm('Область очень большая — поиск может занять минуту. Продолжить?')) return;
+  const limitHint = useYa ? 'бесплатный дневной лимит Яндекса' : 'лимит ключа 2ГИС';
+  if (!(source === 'osm') && queries.length * pages > 60 &&
+      !confirm(`До ${queries.length * pages} запросов — это расходует ${limitHint}. Продолжить?`)) return;
 
   setLoading(true);
   setStatus('Загружаю…');
   try {
-    const raw = use2gis
-      ? (await search2gis(queries, b, key, pages)).map(normalize2gis).filter(x => x && b.contains([x.lat, x.lng]))
+    const raw = use2gis ? (await search2gis(queries, b, key, pages)).map(normalize2gis).filter(x => x && b.contains([x.lat, x.lng]))
+      : useYa ? (await searchYandex(queries, b, key, pages)).map(normalizeYa).filter(x => x && b.contains([x.lat, x.lng]))
       : (await overpass(buildQuery(cats, b))).elements.map(normalize);
     const seen = new Set();
     lastResults = raw.filter(x => x && !seen.has(x.id) && seen.add(x.id));
-    lastSource = use2gis ? '2gis' : 'osm';
+    lastSource = source;
     lastEnrich = null;
     if (use2gis && lastResults.some(x => x.noContactData)) {
       // Ключ 2ГИС без доступа к контактам — ищем те же фирмы в OpenStreetMap.
@@ -458,6 +515,29 @@ function messengers(x) {
   return list.sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type) || !!a.guess - !!b.guess);
 }
 
+function normalizeYa(f) {
+  const m = f.properties?.CompanyMetaData;
+  const c = f.geometry?.coordinates;
+  if (!m || !c || !m.name) return null;
+  const site = m.url || '';
+  const isSocialSite = !!site && SOCIAL_SITE_RE.test(site);
+  const phones = m.Phones || [];
+  return {
+    id: 'ya/' + m.id,
+    yaUrl: 'https://yandex.ru/maps/org/' + m.id + '/',
+    name: m.name,
+    category: m.Categories?.[0]?.name || '',
+    lat: c[1], lng: c[0],
+    address: m.address || '',
+    phone: (phones.find(p => isMobile(p.formatted)) || phones[0])?.formatted || '',
+    email: '',
+    hours: m.Hours?.text || '',
+    site, isSocialSite,
+    social: uniqSocial([isSocialSite ? socialLink('other', site) : null]),
+    chain: false,
+  };
+}
+
 function hasRealSite(x, socialOk) {
   if (!x.site) return false;
   return !(socialOk && x.isSocialSite);
@@ -522,7 +602,7 @@ function linksHtml(x) {
   const q = encodeURIComponent(x.name + (x.address ? ' ' + x.address : ''));
   const parts = [];
   if (x.site && !x.isSocialSite) parts.push(`<a class="site" href="${esc(/^https?:/.test(x.site) ? x.site : 'https://' + x.site)}" target="_blank" rel="noopener">Сайт ↗</a>`);
-  parts.push(`<a href="https://yandex.ru/maps/?text=${q}&ll=${x.lng},${x.lat}&z=17" target="_blank" rel="noopener">Яндекс</a>`);
+  parts.push(`<a href="${x.yaUrl || `https://yandex.ru/maps/?text=${q}&ll=${x.lng},${x.lat}&z=17`}" target="_blank" rel="noopener">Яндекс</a>`);
   parts.push(`<a href="${x.gisUrl || 'https://2gis.ru/search/' + q}" target="_blank" rel="noopener">2ГИС</a>`);
   parts.push(`<button type="button" data-act="show">На карте</button>`);
   parts.push(`<button type="button" data-act="copy">Копировать</button>`);

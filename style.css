@@ -225,6 +225,8 @@ textarea.inp { resize: vertical; line-height: 1.45; }
 .segctl span { display: block; text-align: center; padding: 8px; border-radius: 8px; font-weight: 600; color: var(--muted); }
 .segctl input:checked + span { background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
 body:not(.src-2gis) .gis-only { display: none; }
+body:not(.src-yandex) .ya-only { display: none; }
+body.src-osm .key-only { display: none; }
 .sw { display: flex; align-items: center; gap: 10px; padding: 7px 0; cursor: pointer; }
 .sw input { display: none; }
 .sw i { flex: none; position: relative; width: 38px; height: 22px; border-radius: 999px; background: var(--line); transition: .15s; }

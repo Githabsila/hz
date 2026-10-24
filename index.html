@@ -87,19 +87,24 @@
     <div class="field">
       <span class="lbl">Источник данных</span>
       <div class="segctl">
+        <label><input type="radio" name="src" value="yandex"><span>Яндекс</span></label>
         <label><input type="radio" name="src" value="2gis"><span>2ГИС</span></label>
         <label><input type="radio" name="src" value="osm"><span>OpenStreetMap</span></label>
       </div>
-      <select id="optSource" hidden><option value="2gis"></option><option value="osm"></option></select>
+      <select id="optSource" hidden><option value="yandex"></option><option value="2gis"></option><option value="osm"></option></select>
     </div>
 
+    <div class="field ya-only">
+      <span class="lbl">Ключ «API Поиска по организациям» <a href="https://developer.tech.yandex.ru/services/" target="_blank" rel="noopener">получить</a></span>
+      <input id="yaKey" class="inp" type="password" placeholder="xxxxxxxx-xxxx-…" autocomplete="off">
+    </div>
     <div class="field gis-only">
       <span class="lbl">Ключ API 2ГИС <a href="https://platform.2gis.ru/" target="_blank" rel="noopener">получить</a></span>
       <input id="gisKey" class="inp" type="password" placeholder="xxxxxxxx-xxxx-…" autocomplete="off">
     </div>
-    <div class="field gis-only">
+    <div class="field key-only">
       <span class="lbl">Глубина поиска <small>страниц на запрос, тратит лимит ключа</small></span>
-      <input id="gisPages" class="inp narrow" type="number" min="1" max="20" value="5">
+      <input id="gisPages" class="inp narrow" type="number" min="1" max="20" value="1">
     </div>
 
     <div class="field">
