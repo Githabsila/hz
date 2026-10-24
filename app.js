@@ -144,7 +144,7 @@ map.on('moveend', () => {
 const savedCats = store.get('leads.cats', null);
 $('#cats').innerHTML = CATEGORIES.map(c => {
   const on = savedCats ? savedCats.includes(c.id) : !!c.on;
-  return `<label class="chip"><input type="checkbox" value="${c.id}" ${on ? 'checked' : ''}>${c.label}</label>`;
+  return `<label class="chip"><input type="checkbox" value="${c.id}" ${on ? 'checked' : ''}><span>${c.label}</span></label>`;
 }).join('');
 $('#cats').addEventListener('change', () => store.set('leads.cats', selectedCats().map(c => c.id)));
 
@@ -153,13 +153,16 @@ $('#optStatus').insertAdjacentHTML('beforeend', STATUSES.map(s => `<option value
 // Источник данных и ключ 2ГИС (ключ хранится только в этом браузере).
 const src = store.get('leads.src', { source: '2gis', key: '', pages: 5 });
 $('#optSource').value = src.source;
+document.querySelector(`input[name=src][value="${src.source}"]`).checked = true;
 $('#gisKey').value = src.key;
 $('#gisPages').value = src.pages;
 function saveSrc() {
+  $('#optSource').value = document.querySelector('input[name=src]:checked').value;
   store.set('leads.src', { source: $('#optSource').value, key: $('#gisKey').value.trim(), pages: +$('#gisPages').value || 5 });
   document.body.classList.toggle('src-2gis', $('#optSource').value === '2gis');
 }
-['#optSource', '#gisKey', '#gisPages'].forEach(id => $(id).addEventListener('change', saveSrc));
+['#gisKey', '#gisPages'].forEach(id => $(id).addEventListener('change', saveSrc));
+document.querySelectorAll('input[name=src]').forEach(r => r.addEventListener('change', saveSrc));
 saveSrc();
 
 const OPTS = ['optNoSite', 'optSocialOk', 'optPhone', 'optMsg', 'optNoChains', 'optHideRejected'];
@@ -176,13 +179,16 @@ $('#optStatus').addEventListener('change', render);
 $('#tplText').value = store.get('leads.tpl', DEFAULT_TPL);
 $('#tplText').addEventListener('input', e => store.set('leads.tpl', e.target.value));
 
-$('#filtersBtn').addEventListener('click', () => $('#filters').classList.toggle('open'));
+const openSettings = () => $('#filters').showModal();
+$('#filtersBtn').addEventListener('click', openSettings);
+$('#filters').addEventListener('close', saveSrc);
+// Клик по затемнённому фону закрывает окно настроек.
+$('#filters').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
 
-document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
 function showTab(tab) {
-  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('active', x.dataset.tab === tab));
-  $('#map').classList.toggle('active', tab === 'map');
-  $('#list').classList.toggle('active', tab === 'list');
+  document.querySelectorAll('.seg button').forEach(x => x.classList.toggle('active', x.dataset.tab === tab));
+  document.body.classList.toggle('tab-map', tab === 'map');
   if (tab === 'map') map.invalidateSize();
 }
 
@@ -191,34 +197,48 @@ function selectedCats() {
   return CATEGORIES.filter(c => ids.includes(c.id));
 }
 
-function setStatus(text) { $('#status').textContent = text; }
+function setStatus(text, isError) {
+  $('#status').textContent = text;
+  $('#status').classList.toggle('error', !!isError);
+  if (text) $('#stats').innerHTML = '';
+}
 
-// ---------- Поиск города ----------
+function setLoading(on) {
+  document.body.classList.toggle('loading', on);
+  ['#goBtn', '#searchBtn'].forEach(id => { $(id).disabled = on; });
+  if (on) $('#list').innerHTML = '<div class="skel"></div>'.repeat(4);
+}
 
+// ---------- Поиск: город → карта → организации ----------
+
+let lastPlace = '';
 $('#cityForm').addEventListener('submit', async e => {
   e.preventDefault();
+  $('#cityInput').blur();
   const q = $('#cityInput').value.trim();
-  if (!q) return;
-  setStatus('Ищу «' + q + '»…');
-  try {
-    const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=ru&q=' + encodeURIComponent(q));
-    const data = await r.json();
-    if (!data.length) { setStatus('Место не найдено. Попробуйте написать иначе.'); return; }
-    const [s, n, w, e2] = data[0].boundingbox.map(Number);
-    map.fitBounds([[s, w], [n, e2]]);
-    showTab('map');
-    setStatus(data[0].display_name + ' — теперь нажмите «Искать». Для большого города лучше приблизить нужный район.');
-  } catch {
-    setStatus('Не удалось найти город (нет сети?). Можно просто подвинуть карту вручную.');
+  if (q && q !== lastPlace) {
+    setStatus('Ищу «' + q + '»…');
+    try {
+      const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=ru&q=' + encodeURIComponent(q));
+      const data = await r.json();
+      if (!data.length) { setStatus('Место «' + q + '» не найдено', true); return; }
+      const [s, n, w, e2] = data[0].boundingbox.map(Number);
+      map.fitBounds([[s, w], [n, e2]]);
+      lastPlace = q;
+    } catch {
+      setStatus('Не удалось найти город — проверьте интернет', true);
+      return;
+    }
   }
+  runSearch();
 });
 
 $('#geoBtn').addEventListener('click', () => {
-  if (!navigator.geolocation) { setStatus('Геолокация недоступна в этом браузере.'); return; }
+  if (!navigator.geolocation) { setStatus('Геолокация недоступна', true); return; }
   setStatus('Определяю местоположение…');
   navigator.geolocation.getCurrentPosition(
-    p => { map.setView([p.coords.latitude, p.coords.longitude], 15); showTab('map'); setStatus('Готово. Нажмите «Искать».'); },
-    () => setStatus('Не удалось получить местоположение — разрешите доступ к геолокации.'),
+    p => { map.setView([p.coords.latitude, p.coords.longitude], 15); lastPlace = ''; runSearch(); },
+    () => setStatus('Разрешите доступ к геолокации', true),
     { enableHighAccuracy: true, timeout: 15000 },
   );
 });
@@ -252,7 +272,7 @@ async function overpass(query) {
       return await r.json();
     } catch (err) {
       lastErr = err;
-      setStatus('Сервер не ответил, пробую другой…');
+      setStatus('Сервер занят, пробую другой…');
     }
   }
   throw lastErr;
@@ -269,7 +289,7 @@ async function search2gis(queries, b, key, maxPages) {
   const out = [];
   for (const [qi, q] of queries.entries()) {
     for (let page = 1; page <= maxPages; page++) {
-      setStatus(`2ГИС: «${q}» (${qi + 1}/${queries.length}), стр. ${page}… собрано ${out.length}`);
+      setStatus(`${q} · ${qi + 1}/${queries.length} · найдено ${out.length}`);
       const params = new URLSearchParams({
         q, point: `${c.lng},${c.lat}`, radius, type: 'branch', fields, page, page_size: pageSize, locale: 'ru_RU', key,
       });
@@ -292,23 +312,24 @@ async function search2gis(queries, b, key, maxPages) {
   return out;
 }
 
-$('#searchBtn').addEventListener('click', async () => {
+$('#searchBtn').addEventListener('click', runSearch);
+
+async function runSearch() {
   const cats = selectedCats();
-  if (!cats.length) { setStatus('Отметьте хотя бы одну категорию в фильтрах.'); $('#filters').classList.add('open'); return; }
+  if (!cats.length) { setStatus('Выберите хотя бы одну сферу', true); return; }
   const b = map.getBounds();
   const use2gis = $('#optSource').value === '2gis';
   const key = $('#gisKey').value.trim();
-  if (use2gis && !key) { setStatus('Вставьте ключ API 2ГИС в фильтрах (или выберите источник OpenStreetMap).'); $('#filters').classList.add('open'); return; }
+  if (use2gis && !key) { setStatus('Нужен ключ 2ГИС — вставьте его в настройках', true); openSettings(); return; }
   const queries = [...new Set(cats.flatMap(c => QUERIES_2GIS[c.id] || []))];
   const pages = Math.max(1, Math.min(20, +$('#gisPages').value || 5));
   const area = (b.getNorth() - b.getSouth()) * (b.getEast() - b.getWest());
-  if (!use2gis && area > 1.5 && !confirm('Область очень большая — поиск может занять минуту и вернуть тысячи объектов. Продолжить?')) return;
+  if (!use2gis && area > 1.5 && !confirm('Область очень большая — поиск может занять минуту. Продолжить?')) return;
   if (use2gis && queries.length * pages > 60 &&
-      !confirm(`Будет до ${queries.length * pages} запросов к 2ГИС — это расходует лимит ключа. Продолжить?`)) return;
+      !confirm(`До ${queries.length * pages} запросов к 2ГИС — это расходует лимит ключа. Продолжить?`)) return;
 
-  const btn = $('#searchBtn');
-  btn.disabled = true;
-  setStatus('Загружаю данные с карты…');
+  setLoading(true);
+  setStatus('Загружаю…');
   try {
     const raw = use2gis
       ? (await search2gis(queries, b, key, pages)).map(normalize2gis).filter(x => x && b.contains([x.lat, x.lng]))
@@ -316,14 +337,17 @@ $('#searchBtn').addEventListener('click', async () => {
     const seen = new Set();
     lastResults = raw.filter(x => x && !seen.has(x.id) && seen.add(x.id));
     $('#csvBtn').disabled = !lastResults.length;
-    render(true);
-    $('#filters').classList.remove('open'); // на телефоне сворачиваем фильтры, чтобы освободить место
+    setStatus('');
+    render();
+    showTab('list');
+    $('#list').scrollTop = 0;
   } catch (err) {
-    setStatus('Ошибка загрузки: ' + err.message + '. Попробуйте ещё раз или уменьшите область.');
+    $('#list').innerHTML = '';
+    setStatus('Ошибка: ' + err.message, true);
   } finally {
-    btn.disabled = false;
+    setLoading(false);
   }
-});
+}
 
 // ---------- Обработка результатов ----------
 
@@ -459,71 +483,83 @@ function fillTpl(x) {
     .replaceAll('{name}', x.name).replaceAll('{category}', x.category.toLowerCase()).replaceAll('{address}', x.address);
 }
 
-// Блок «Куда писать»: мессенджеры, соцсети, email, телефон.
+// Иконки мессенджеров (упрощённые силуэты).
+const ICONS = {
+  telegram: '<svg viewBox="0 0 24 24"><path d="M21.5 4.3 2.9 11.5c-1.3.5-1.3 1.2-.2 1.5l4.8 1.5 1.8 5.6c.2.6.4.8.9.8.4 0 .6-.2.9-.5l2.3-2.2 4.7 3.5c.9.5 1.5.2 1.7-.8l3.1-14.6c.3-1.3-.5-1.9-1.4-1.5zM9 14.2l9.4-6c.4-.3.8-.1.5.2l-7.6 7-.3 3.3L9 14.2z"/></svg>',
+  whatsapp: '<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm5.3 14.1c-.2.6-1.3 1.2-1.8 1.2-.5.1-1 .2-3.3-.7-2.8-1.1-4.5-3.9-4.7-4.1-.1-.2-1.1-1.5-1.1-2.9s.7-2 1-2.3c.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.5l.8 2c.1.2.1.4 0 .5l-.3.5-.4.4c-.1.2-.3.3-.1.6.2.3.7 1.2 1.5 1.9 1 .9 1.9 1.2 2.2 1.3.3.1.4.1.6-.1l.8-1c.2-.3.4-.2.6-.1l1.9.9c.3.1.5.2.5.3.1.1.1.7-.1 1.4z"/></svg>',
+  vk: '<svg viewBox="0 0 24 24"><path d="M13 18c-6.6 0-10.4-4.5-10.5-12h3.3c.1 5.5 2.5 7.8 4.4 8.3V6h3.1v4.7c1.9-.2 3.9-2.4 4.5-4.7h3.1a9.2 9.2 0 0 1-4.2 6 9.5 9.5 0 0 1 4.9 6h-3.4c-.7-2.3-2.5-4-4.9-4.3V18H13z"/></svg>',
+  instagram: '<svg viewBox="0 0 24 24"><path d="M12 7.3a4.7 4.7 0 1 0 0 9.4 4.7 4.7 0 0 0 0-9.4zm0 7.7a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm4.9-8.9a1.1 1.1 0 1 1 0 2.2 1.1 1.1 0 0 1 0-2.2zM12 2c-2.7 0-3.1 0-4.1.1-3.7.2-5.6 2-5.8 5.8C2 8.9 2 9.3 2 12s0 3.1.1 4.1c.2 3.7 2 5.6 5.8 5.8 1 .1 1.4.1 4.1.1s3.1 0 4.1-.1c3.7-.2 5.6-2 5.8-5.8.1-1 .1-1.4.1-4.1s0-3.1-.1-4.1c-.2-3.7-2-5.6-5.8-5.8C15.1 2 14.7 2 12 2zm0 1.8c2.7 0 3 0 4 .1 2.7.1 4 1.4 4.1 4.1.1 1 .1 1.4.1 4s0 3-.1 4c-.1 2.7-1.4 4-4.1 4.1-1 .1-1.4.1-4 .1s-3 0-4-.1c-2.7-.1-4-1.4-4.1-4.1-.1-1-.1-1.4-.1-4s0-3 .1-4C3.9 5.3 5.3 4 8 3.9c1-.1 1.3-.1 4-.1z"/></svg>',
+  phone: '<svg viewBox="0 0 24 24"><path d="M6.6 10.8a15.2 15.2 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1A17 17 0 0 1 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1l-2.3 2.2z"/></svg>',
+  email: '<svg viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4a2 2 0 0 1-2-2V6c0-1.1.9-2 2-2zm8 7.2L20 6H4l8 5.2zM4 8v10h16V8l-8 5.2L4 8z"/></svg>',
+};
+
+// Кнопки «куда писать»: мессенджеры, соцсети, email, телефон.
 function contactsHtml(x) {
   const parts = [];
   for (const m of messengers(x)) {
     let href = m.url;
     if (m.type === 'whatsapp' && href.startsWith('https://wa.me/') && !href.includes('?')) href += '?text=' + encodeURIComponent(fillTpl(x));
-    const label = MESSENGERS[m.type].label + (m.guess ? ' <small>по номеру</small>' : '');
-    const title = m.guess ? 'В базе не указан — пробуем по мобильному номеру, может не сработать' : m.url;
-    parts.push(`<a class="msg msg-${m.type}" data-act="msg" href="${esc(href)}" title="${esc(title)}" target="_blank" rel="noopener">${label}</a>`);
+    const title = m.guess ? 'Нет в базе — пробуем по мобильному номеру' : m.url;
+    parts.push(`<a class="mb m-${m.type}${m.guess ? ' guess' : ''}" data-act="msg" href="${esc(href)}" title="${esc(title)}" target="_blank" rel="noopener">${ICONS[m.type] || ''}${MESSENGERS[m.type].label}${m.guess ? '<sup>?</sup>' : ''}</a>`);
   }
-  if (x.email) parts.push(`<a class="msg msg-email" data-act="msg" href="mailto:${esc(x.email)}?subject=${encodeURIComponent('Сайт для ' + x.name)}&body=${encodeURIComponent(fillTpl(x))}">✉ ${esc(x.email)}</a>`);
-  if (x.phone) parts.push(`<a class="call" href="tel:${esc(digits(x.phone))}">📞 ${esc(x.phone)}</a>`);
-  if (!parts.length) return '<div class="contact none">Контактов в базе нет — откройте карточку в 2ГИС или Яндексе ниже, там часто есть телефон и соцсети.</div>';
-  return `<div class="contact"><b>Куда писать:</b><div class="row">${parts.join('')}</div></div>`;
+  if (x.email) parts.push(`<a class="mb m-email" data-act="msg" href="mailto:${esc(x.email)}?subject=${encodeURIComponent('Сайт для ' + x.name)}&body=${encodeURIComponent(fillTpl(x))}" title="${esc(x.email)}">${ICONS.email}Email</a>`);
+  if (x.phone) parts.push(`<a class="mb m-phone" href="tel:${esc(digits(x.phone))}">${ICONS.phone}${esc(x.phone)}</a>`);
+  if (!parts.length) return `<div class="c-none">Контактов нет в базе · <a href="${esc(x.gisUrl || 'https://2gis.ru/search/' + encodeURIComponent(x.name))}" target="_blank" rel="noopener">искать в 2ГИС ↗</a></div>`;
+  return `<div class="c-contacts">${parts.join('')}</div>`;
 }
 
 function linksHtml(x) {
   const q = encodeURIComponent(x.name + (x.address ? ' ' + x.address : ''));
   const parts = [];
-  if (x.site && !x.isSocialSite) parts.push(`<a href="${esc(/^https?:/.test(x.site) ? x.site : 'https://' + x.site)}" target="_blank" rel="noopener">🌐 Сайт</a>`);
+  if (x.site && !x.isSocialSite) parts.push(`<a class="site" href="${esc(/^https?:/.test(x.site) ? x.site : 'https://' + x.site)}" target="_blank" rel="noopener">Сайт ↗</a>`);
   parts.push(`<a href="https://yandex.ru/maps/?text=${q}&ll=${x.lng},${x.lat}&z=17" target="_blank" rel="noopener">Яндекс</a>`);
   parts.push(`<a href="${x.gisUrl || 'https://2gis.ru/search/' + q}" target="_blank" rel="noopener">2ГИС</a>`);
-  parts.push(`<a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank" rel="noopener">Google</a>`);
+  parts.push(`<button type="button" data-act="show">На карте</button>`);
+  parts.push(`<button type="button" data-act="copy">Копировать</button>`);
+  parts.push(`<button type="button" data-act="note">Заметка</button>`);
   return parts.join('');
 }
 
 function siteTag(x) {
-  if (!x.site) return '<span class="tag nosite">нет сайта</span>';
-  if (x.isSocialSite) return '<span class="tag social">только соцсеть</span>';
-  return '<span class="tag site">есть сайт</span>';
+  if (!x.site) return '<span class="tag nosite">Нет сайта</span>';
+  if (x.isSocialSite) return '<span class="tag social">Только соцсеть</span>';
+  return '<span class="tag site">Есть сайт</span>';
 }
 
-function render(fresh) {
+function render() {
   const items = filtered();
-  $('#countBadge').textContent = lastResults.length ? `(${items.length})` : '';
-  if (fresh || lastResults.length) {
-    const noSiteTotal = lastResults.filter(x => !hasRealSite(x, $('#optSocialOk').checked)).length;
-    setStatus(`Найдено объектов: ${lastResults.length}, из них без сайта: ${noSiteTotal}. Показано: ${items.length}.`);
+  const socialOk = $('#optSocialOk').checked;
+  $('#countBadge').textContent = lastResults.length ? items.length : '';
+  if (lastResults.length && !$('#status').textContent) {
+    const noSite = lastResults.filter(x => !hasRealSite(x, socialOk)).length;
+    const writable = lastResults.filter(x => !hasRealSite(x, socialOk) && (x.social.length || isMobile(x.phone) || x.email)).length;
+    $('#stats').innerHTML = `<b>${items.length}</b> найдено<span class="dot">·</span><b>${writable}</b> можно написать`;
+    $('#stats').title = `Показано ${items.length}, без сайта ${noSite}, можно написать ${writable}`;
   }
 
   cluster.clearLayers();
   for (const x of items) {
     const m = L.marker([x.lat, x.lng]);
-    m.bindPopup(() => `<b>${esc(x.name)}</b><br>${esc(x.category)}<br>${esc(x.address)}<br>${x.phone ? esc(x.phone) + '<br>' : ''}${messengers(x).filter(m => !m.guess).map(m => MESSENGERS[m.type].label).join(', ')}${x.social.length ? '<br>' : ''}<a data-goto="${x.id}">Открыть в списке →</a>`);
+    const ms = messengers(x).filter(m => !m.guess).map(m => MESSENGERS[m.type].label).join(', ');
+    m.bindPopup(() => `<b>${esc(x.name)}</b><br>${esc(x.category)}${x.phone ? '<br>' + esc(x.phone) : ''}${ms ? '<br>' + ms : ''}<br><a data-goto="${x.id}">Открыть карточку →</a>`);
     cluster.addLayer(m);
   }
 
   const list = $('#list');
   if (!lastResults.length) return;
-  if (!items.length) { list.innerHTML = '<p class="empty">Под фильтры ничего не подходит. Ослабьте фильтры или выберите другую область.</p>'; return; }
+  if (!items.length) { list.innerHTML = '<div class="empty"><div class="empty-ico">🔍</div><h2>Ничего не подходит</h2><p>Ослабьте фильтры или сдвиньте карту</p></div>'; return; }
   list.innerHTML = items.map(x => {
     const c = crm[x.id] || {};
     const st = c.status || 'new';
-    return `<article class="card st-${st}" id="c-${x.id.replace('/', '-')}" data-id="${x.id}">
-      <h3>${esc(x.name)}</h3>
-      <div class="meta">${esc(x.category)}${x.address ? ' · ' + esc(x.address) : ''}</div>
-      <div class="meta">${siteTag(x)}${x.hours ? '🕒 ' + esc(x.hours) : ''}</div>
-      ${contactsHtml(x)}
-      <div class="row links"><span class="meta">Проверить:</span>${linksHtml(x)}</div>
-      <div class="row">
-        <select data-act="status">${STATUSES.map(s => `<option value="${s.id}" ${s.id === st ? 'selected' : ''}>${s.label}</option>`).join('')}</select>
-        <button type="button" data-act="copy">Копировать текст</button>
-        <button type="button" data-act="show">На карте</button>
+    return `<article class="card st-${st}${c.note ? ' has-note' : ''}" id="c-${x.id.replace('/', '-')}" data-id="${x.id}">
+      <div class="c-top">
+        <div class="c-title"><h3>${esc(x.name)}</h3><div class="c-sub">${esc(x.category)}${x.address ? ' · ' + esc(x.address) : ''}</div></div>
+        <select class="st-pill st-${st}" data-act="status" aria-label="Статус">${STATUSES.map(s => `<option value="${s.id}" ${s.id === st ? 'selected' : ''}>${s.label}</option>`).join('')}</select>
       </div>
-      <textarea data-act="note" placeholder="Заметка: с кем говорил, когда перезвонить…">${esc(c.note || '')}</textarea>
+      <div class="c-tags">${siteTag(x)}${x.hours ? `<span class="tag">${esc(x.hours)}</span>` : ''}</div>
+      ${contactsHtml(x)}
+      <div class="c-foot">${linksHtml(x)}</div>
+      <textarea class="c-note" data-act="note" placeholder="С кем говорил, когда перезвонить…">${esc(c.note || '')}</textarea>
     </article>`;
   }).join('');
 }
@@ -537,7 +573,8 @@ $('#list').addEventListener('change', e => {
   const card = e.target.closest('.card');
   if (card && e.target.dataset.act === 'status') {
     saveCrm(card.dataset.id, { status: e.target.value });
-    card.className = 'card st-' + e.target.value;
+    card.className = card.className.replace(/st-\w+/, 'st-' + e.target.value);
+    e.target.className = 'st-pill st-' + e.target.value;
   }
 });
 $('#list').addEventListener('input', e => {
@@ -551,14 +588,18 @@ $('#list').addEventListener('click', async e => {
   const msg = e.target.closest('[data-act="msg"]');
   if (msg) {
     // В Telegram/VK/Instagram нельзя передать текст в ссылке — кладём его в буфер, чтобы просто вставить в чат.
-    if (await copyText(fillTpl(x))) toast('Текст сообщения скопирован — вставьте его в чат');
+    if (await copyText(fillTpl(x))) toast('Текст скопирован — вставьте его в чат');
     return;
   }
-  if (e.target.dataset.act === 'show') {
+  const act = e.target.closest('button')?.dataset.act;
+  if (act === 'note') {
+    card.classList.toggle('note-open');
+    if (card.classList.contains('note-open')) card.querySelector('.c-note').focus();
+  } else if (act === 'show') {
     showTab('map');
     map.setView([x.lat, x.lng], 18);
-  } else if (e.target.dataset.act === 'copy') {
-    if (await copyText(fillTpl(x))) e.target.textContent = 'Скопировано ✓';
+  } else if (act === 'copy') {
+    if (await copyText(fillTpl(x))) toast('Текст скопирован');
     else prompt('Скопируйте текст:', fillTpl(x));
   }
 });
