@@ -124,6 +124,7 @@ const store = {
 let crm = store.get('leads.crm', {});       // { osmId: { status, note } }
 let lastResults = [];                        // нормализованные объекты из последнего поиска
 let lastSource = '';                         // откуда пришли результаты: '2gis' или 'osm'
+let lastEnrich = null;                       // { allNo, matched } — подтягивали ли контакты из OSM
 
 // ---------- Карта ----------
 
@@ -338,6 +339,12 @@ async function runSearch() {
     const seen = new Set();
     lastResults = raw.filter(x => x && !seen.has(x.id) && seen.add(x.id));
     lastSource = use2gis ? '2gis' : 'osm';
+    lastEnrich = null;
+    if (use2gis && lastResults.some(x => x.noContactData)) {
+      // Ключ 2ГИС без доступа к контактам — ищем те же фирмы в OpenStreetMap.
+      setStatus('Ищу контакты в OpenStreetMap…');
+      lastEnrich = { allNo: lastResults.every(x => x.noContactData), matched: await enrichFromOsm(lastResults, b) };
+    }
     $('#csvBtn').disabled = !lastResults.length;
     setStatus('');
     render();
@@ -507,7 +514,7 @@ function contactsHtml(x) {
   }
   if (x.email) parts.push(`<a class="mb m-email" data-act="msg" href="mailto:${esc(x.email)}?subject=${encodeURIComponent('Сайт для ' + x.name)}&body=${encodeURIComponent(fillTpl(x))}" title="${esc(x.email)}">${ICONS.email}Email</a>`);
   if (x.phone) parts.push(`<a class="mb m-phone" href="tel:${esc(digits(x.phone))}">${ICONS.phone}${esc(x.phone)}</a>`);
-  if (!parts.length) return `<div class="c-none">Контактов нет в базе · <a href="${esc(x.gisUrl || 'https://2gis.ru/search/' + encodeURIComponent(x.name))}" target="_blank" rel="noopener">искать в 2ГИС ↗</a></div>`;
+  if (!parts.length) return `<div class="c-contacts"><a class="mb m-2gis" href="${esc(x.gisUrl || 'https://2gis.ru/search/' + encodeURIComponent(x.name))}" target="_blank" rel="noopener">Контакты в 2ГИС ↗</a></div>`;
   return `<div class="c-contacts">${parts.join('')}</div>`;
 }
 
@@ -524,6 +531,9 @@ function linksHtml(x) {
 }
 
 function siteTag(x) {
+  if (x.noContactData) return '<span class="tag">Сайт неизвестен</span>';
+  if (x.fromOsm && !x.site) return '<span class="tag nosite">Нет сайта</span><span class="tag">контакты из OSM</span>';
+  if (x.fromOsm) return (x.isSocialSite ? '<span class="tag social">Только соцсеть</span>' : '<span class="tag site">Есть сайт</span>') + '<span class="tag">контакты из OSM</span>';
   if (!x.site) return '<span class="tag nosite">Нет сайта</span>';
   if (x.isSocialSite) return '<span class="tag social">Только соцсеть</span>';
   return '<span class="tag site">Есть сайт</span>';
@@ -575,13 +585,41 @@ function render() {
   }).join('');
 }
 
-// 2ГИС вернул фирмы без контактов вообще — значит, ключ не даёт к ним доступа.
+// Ключ 2ГИС не дал контактов — объясняем, что подтянули из OSM, а что проверять вручную.
 function noContactsBanner() {
-  if (lastSource !== '2gis' || !lastResults.length || !lastResults.every(x => x.noContactData)) return '';
-  return `<div class="banner"><b>2ГИС не прислал контакты.</b> Похоже, у вашего ключа нет доступа к телефонам и сайтам
-    (так бывает на демо-ключе). Поэтому нельзя понять, у кого нет сайта и куда писать.
-    Проверяйте фирмы кнопкой «2ГИС» в карточке, переключитесь на OpenStreetMap в настройках
-    или включите доступ к контактам в кабинете platform.2gis.ru.</div>`;
+  if (lastSource !== '2gis' || !lastEnrich?.allNo) return '';
+  return `<div class="banner"><b>Ваш ключ 2ГИС не отдаёт контакты</b> (обычно так у демо-ключа).
+    Телефоны и соцсети для <b>${lastEnrich.matched}</b> из ${lastResults.length} фирм подтянули из OpenStreetMap.
+    У остальных сайт неизвестен — откройте карточку в 2ГИС, там видны телефон и сайт.
+    Чтобы получать все контакты сразу, подключите их к ключу в кабинете platform.2gis.ru.</div>`;
+}
+
+const normName = s => String(s).toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9]/g, '');
+
+// Подтягивает контакты из OSM к фирмам 2ГИС: то же название и не дальше 250 м.
+async function enrichFromOsm(list, b) {
+  const need = list.filter(x => x.noContactData);
+  const box = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
+  const keys = 'phone|contact:phone|contact:mobile|website|contact:website|email|contact:email|contact:telegram|contact:whatsapp|contact:vk|contact:instagram|contact:viber';
+  let data;
+  try { data = await overpass(`[out:json][timeout:90];nwr["name"][~"^(${keys})$"~"."](${box});out center tags;`); }
+  catch { return 0; }
+  const byName = new Map();
+  for (const o of data.elements.map(normalize).filter(Boolean)) {
+    const k = normName(o.name);
+    if (k.length < 3) continue;
+    if (!byName.has(k)) byName.set(k, []);
+    byName.get(k).push(o);
+  }
+  let matched = 0;
+  for (const x of need) {
+    // 2ГИС пишет «Название, вид деятельности» — сравниваем только название.
+    const o = (byName.get(normName(x.name.split(',')[0])) || []).find(o => map.distance([x.lat, x.lng], [o.lat, o.lng]) < 250);
+    if (!o) continue;
+    Object.assign(x, { phone: o.phone, email: o.email, site: o.site, isSocialSite: o.isSocialSite, social: o.social, noContactData: false, fromOsm: true });
+    matched++;
+  }
+  return matched;
 }
 
 // Почему всё скрыто: считаем, сколько отсекает каждый включённый фильтр.

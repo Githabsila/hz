@@ -260,3 +260,4 @@ body:not(.src-2gis) .gis-only { display: none; }
   font-size: 13px; line-height: 1.5;
 }
 .banner b { color: var(--warn); }
+.m-2gis { background: #19aa1e; }
