@@ -161,6 +161,11 @@ document.querySelector(`input[name=src][value="${src.source}"]`).checked = true;
 $('#gisKey').value = src.key;
 $('#yaKey').value = src.yaKey;
 $('#gisPages').value = src.pages;
+// Ключ можно передать ссылкой вида #ya=КЛЮЧ или #2gis=КЛЮЧ: он сохраняется в браузере, а из адреса убирается.
+const hashKeys = new URLSearchParams(location.hash.slice(1));
+if (hashKeys.get('ya')) { $('#yaKey').value = hashKeys.get('ya'); document.querySelector('input[name=src][value="yandex"]').checked = true; }
+if (hashKeys.get('2gis')) { $('#gisKey').value = hashKeys.get('2gis'); if (!hashKeys.get('ya')) document.querySelector('input[name=src][value="2gis"]').checked = true; }
+if (hashKeys.get('ya') || hashKeys.get('2gis')) history.replaceState(null, '', location.pathname + location.search);
 function saveSrc() {
   $('#optSource').value = document.querySelector('input[name=src]:checked').value;
   const source = $('#optSource').value;
