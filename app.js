@@ -341,8 +341,19 @@ function jsonp(url) {
 }
 async function yaGet(url) {
   if (!yaUseJsonp) {
-    try { return await (await fetch(url)).json(); }
+    let res;
+    try { res = await fetch(url); }
     catch (err) { if (!(err instanceof TypeError)) throw err; yaUseJsonp = true; }
+    if (res) {
+      const text = await res.text();
+      try { return JSON.parse(text); }
+      catch {
+        // Ошибки Яндекс иногда отдаёт XML-ом — достаём из него текст сообщения.
+        const doc = new DOMParser().parseFromString(text, 'text/xml');
+        const msg = (doc.querySelector('message, error, Message') || doc.documentElement)?.textContent?.trim().slice(0, 200);
+        return { statusCode: res.status === 200 ? 500 : res.status, message: msg || 'непонятный ответ' };
+      }
+    }
   }
   return jsonp(url);
 }
@@ -359,7 +370,7 @@ async function searchYandex(queries, b, key, maxPages) {
       });
       const data = await yaGet('https://search-maps.yandex.ru/v1/?' + params);
       if (data.statusCode && data.statusCode !== 200) {
-        if (data.statusCode === 403 || data.statusCode === 401) throw new Error('ключ Яндекса не принят или кончился дневной лимит (' + (data.message || data.statusCode) + ')');
+        if (data.statusCode === 403 || data.statusCode === 401) throw new Error('ключ Яндекса не принят (' + (data.message || data.statusCode) + '). Новый ключ включается до 15 минут; проверьте, что это ключ «API Поиска по организациям», а не JavaScript API/Геокодера');
         throw new Error(data.message || 'Яндекс вернул ошибку ' + data.statusCode);
       }
       const feats = data.features || [];
