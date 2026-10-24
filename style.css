@@ -31,6 +31,13 @@ input[type=search], select, textarea {
 
 .filters { padding: 0 12px 8px; display: none; }
 .filters.open { display: block; }
+.source { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-bottom: 8px; font-size: 14px; }
+.source .gis-only { display: inline-flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+.source a { color: var(--accent); }
+.source input { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 7px 9px; }
+#gisKey { width: 230px; max-width: 100%; }
+#gisPages { width: 60px; }
+body:not(.src-2gis) .gis-only { display: none !important; }
 .cats { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .chip { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; border: 1px solid var(--line);
         border-radius: 999px; background: var(--card); cursor: pointer; user-select: none; font-size: 14px; }

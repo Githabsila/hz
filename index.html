@@ -25,6 +25,21 @@
 </header>
 
 <section id="filters" class="filters">
+  <div class="source">
+    <label>Источник:
+      <select id="optSource">
+        <option value="2gis">2ГИС (нужен ключ API)</option>
+        <option value="osm">OpenStreetMap (бесплатно)</option>
+      </select>
+    </label>
+    <span class="gis-only">
+      <input id="gisKey" type="password" placeholder="Ключ API 2ГИС" autocomplete="off">
+      <label title="Сколько страниц результатов загружать на каждый запрос. Больше = полнее, но тратит лимит ключа">
+        Страниц на запрос: <input id="gisPages" type="number" min="1" max="20" value="5">
+      </label>
+      <a href="https://platform.2gis.ru/" target="_blank" rel="noopener">Получить ключ</a>
+    </span>
+  </div>
   <div class="cats" id="cats"></div>
   <div class="opts">
     <label><input type="checkbox" id="optNoSite" checked> Только без сайта</label>

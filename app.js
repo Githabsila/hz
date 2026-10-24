@@ -30,6 +30,27 @@ const CATEGORIES = [
   { id: 'allcraft', label: 'Все мастерские', tags: { craft: '*' } },
 ];
 
+// Поисковые запросы 2ГИС для тех же категорий (2ГИС ищет по рубрикам/тексту, а не по тегам OSM).
+const QUERIES_2GIS = {
+  beauty: ['Парикмахерские', 'Салоны красоты', 'Ногтевые студии', 'Барбершопы', 'Массаж', 'Тату-салоны', 'Косметология'],
+  auto: ['Автосервисы', 'Шиномонтаж', 'Автомойки', 'Автозапчасти', 'Кузовной ремонт', 'Автоэлектрики'],
+  food: ['Кафе', 'Рестораны', 'Быстрое питание', 'Кофейни', 'Бары', 'Доставка еды', 'Суши-бары', 'Шаурма'],
+  foodshop: ['Пекарни', 'Кондитерские', 'Мясные магазины', 'Рыбные магазины', 'Продуктовые магазины', 'Торты на заказ'],
+  flowers: ['Цветы', 'Подарки', 'Воздушные шары'],
+  repair: ['Ремонт телефонов', 'Ремонт бытовой техники', 'Ремонт компьютеров', 'Химчистки', 'Ремонт обуви', 'Ателье', 'Изготовление ключей', 'Фотоуслуги'],
+  build: ['Строительные материалы', 'Мебель на заказ', 'Окна', 'Двери', 'Ремонт квартир', 'Натяжные потолки', 'Сантехника', 'Кухни на заказ'],
+  health: ['Стоматологии', 'Медицинские центры', 'Оптика', 'Психологи', 'Массажные салоны'],
+  pets: ['Ветеринарные клиники', 'Зоомагазины', 'Груминг'],
+  sport: ['Фитнес-клубы', 'Йога', 'Школы танцев', 'Спортивные секции', 'Единоборства'],
+  edu: ['Автошколы', 'Языковые школы', 'Детские развивающие центры', 'Репетиторы', 'Курсы', 'Частные детские сады'],
+  hotel: ['Гостиницы', 'Хостелы', 'Базы отдыха', 'Посуточная аренда'],
+  clothes: ['Одежда', 'Обувь', 'Ювелирные магазины', 'Свадебные салоны', 'Секонд-хенды'],
+  office: ['Юридические услуги', 'Бухгалтерские услуги', 'Агентства недвижимости', 'Страхование', 'Туристические агентства', 'Ритуальные услуги', 'Клининг'],
+  allshops: ['Магазины'],
+  allcraft: ['Мастерские', 'Изготовление на заказ'],
+};
+const SOCIAL_2GIS = ['vkontakte', 'instagram', 'telegram', 'whatsapp', 'viber', 'facebook', 'odnoklassniki', 'youtube', 'twitter'];
+
 // Человекочитаемые названия частых типов.
 const TYPE_RU = {
   hairdresser: 'Парикмахерская', beauty: 'Салон красоты', cosmetics: 'Косметика', massage: 'Массаж', tattoo: 'Тату', spa: 'СПА',
@@ -105,6 +126,18 @@ $('#cats').innerHTML = CATEGORIES.map(c => {
 $('#cats').addEventListener('change', () => store.set('leads.cats', selectedCats().map(c => c.id)));
 
 $('#optStatus').insertAdjacentHTML('beforeend', STATUSES.map(s => `<option value="${s.id}">${s.label}</option>`).join(''));
+
+// Источник данных и ключ 2ГИС (ключ хранится только в этом браузере).
+const src = store.get('leads.src', { source: '2gis', key: '', pages: 5 });
+$('#optSource').value = src.source;
+$('#gisKey').value = src.key;
+$('#gisPages').value = src.pages;
+function saveSrc() {
+  store.set('leads.src', { source: $('#optSource').value, key: $('#gisKey').value.trim(), pages: +$('#gisPages').value || 5 });
+  document.body.classList.toggle('src-2gis', $('#optSource').value === '2gis');
+}
+['#optSource', '#gisKey', '#gisPages'].forEach(id => $(id).addEventListener('change', saveSrc));
+saveSrc();
 
 const OPTS = ['optNoSite', 'optSocialOk', 'optPhone', 'optNoChains', 'optHideRejected'];
 const savedOpts = store.get('leads.opts', {});
@@ -202,22 +235,63 @@ async function overpass(query) {
   throw lastErr;
 }
 
+// ---------- Запрос к 2ГИС (Catalog API 3.0) ----------
+
+async function search2gis(queries, b, key, maxPages) {
+  const c = b.getCenter();
+  // 2ГИС ищет по кругу; берём круг, описанный вокруг видимой области (не больше 40 км).
+  const radius = Math.min(40000, Math.ceil(map.distance(c, b.getNorthEast())));
+  const fields = 'items.point,items.contact_groups,items.rubrics,items.org,items.schedule';
+  let pageSize = 50;
+  const out = [];
+  for (const [qi, q] of queries.entries()) {
+    for (let page = 1; page <= maxPages; page++) {
+      setStatus(`2ГИС: «${q}» (${qi + 1}/${queries.length}), стр. ${page}… собрано ${out.length}`);
+      const params = new URLSearchParams({
+        q, point: `${c.lng},${c.lat}`, radius, type: 'branch', fields, page, page_size: pageSize, locale: 'ru_RU', key,
+      });
+      const r = await fetch('https://catalog.api.2gis.com/3.0/items?' + params);
+      const data = await r.json();
+      const code = data.meta?.code;
+      if (code === 404) break; // по запросу ничего нет
+      if (code !== 200) {
+        const msg = data.meta?.error?.message || 'код ' + code;
+        if (code === 400 && pageSize > 10 && /page_size/i.test(msg)) { pageSize = 10; page--; continue; } // демо-ключ: до 10 на страницу
+        if (code === 400 && page > 1) break; // упёрлись в лимит страниц ключа
+        if (code === 403 || code === 401) throw new Error('ключ 2ГИС не принят (' + msg + ')');
+        throw new Error(msg);
+      }
+      const items = data.result?.items || [];
+      out.push(...items);
+      if (items.length < pageSize || page * pageSize >= (data.result?.total || 0)) break;
+    }
+  }
+  return out;
+}
+
 $('#searchBtn').addEventListener('click', async () => {
   const cats = selectedCats();
   if (!cats.length) { setStatus('Отметьте хотя бы одну категорию в фильтрах.'); $('#filters').classList.add('open'); return; }
   const b = map.getBounds();
+  const use2gis = $('#optSource').value === '2gis';
+  const key = $('#gisKey').value.trim();
+  if (use2gis && !key) { setStatus('Вставьте ключ API 2ГИС в фильтрах (или выберите источник OpenStreetMap).'); $('#filters').classList.add('open'); return; }
+  const queries = [...new Set(cats.flatMap(c => QUERIES_2GIS[c.id] || []))];
+  const pages = Math.max(1, Math.min(20, +$('#gisPages').value || 5));
   const area = (b.getNorth() - b.getSouth()) * (b.getEast() - b.getWest());
-  if (area > 1.5 && !confirm('Область очень большая — поиск может занять минуту и вернуть тысячи объектов. Продолжить?')) return;
+  if (!use2gis && area > 1.5 && !confirm('Область очень большая — поиск может занять минуту и вернуть тысячи объектов. Продолжить?')) return;
+  if (use2gis && queries.length * pages > 60 &&
+      !confirm(`Будет до ${queries.length * pages} запросов к 2ГИС — это расходует лимит ключа. Продолжить?`)) return;
 
   const btn = $('#searchBtn');
   btn.disabled = true;
   setStatus('Загружаю данные с карты…');
   try {
-    const data = await overpass(buildQuery(cats, b));
+    const raw = use2gis
+      ? (await search2gis(queries, b, key, pages)).map(normalize2gis).filter(x => x && b.contains([x.lat, x.lng]))
+      : (await overpass(buildQuery(cats, b))).elements.map(normalize);
     const seen = new Set();
-    lastResults = data.elements
-      .map(normalize)
-      .filter(x => x && !seen.has(x.id) && seen.add(x.id));
+    lastResults = raw.filter(x => x && !seen.has(x.id) && seen.add(x.id));
     $('#csvBtn').disabled = !lastResults.length;
     render(true);
     $('#filters').classList.remove('open'); // на телефоне сворачиваем фильтры, чтобы освободить место
@@ -229,6 +303,9 @@ $('#searchBtn').addEventListener('click', async () => {
 });
 
 // ---------- Обработка результатов ----------
+
+// «Сайт», который на деле страница в соцсети или в справочнике.
+const SOCIAL_SITE_RE = /(vk\.com|vk\.link|vkontakte|instagram\.com|facebook\.com|t\.me|ok\.ru|wa\.me|taplink|2gis|yandex\.ru\/(maps|profile)|google\.[a-z.]+\/maps)/i;
 
 function normalize(el) {
   const t = el.tags || {};
@@ -242,7 +319,7 @@ function normalize(el) {
     t['contact:vk'] || t.vk, t['contact:instagram'] || t.instagram, t['contact:telegram'] || t.telegram,
     t['contact:facebook'] || t.facebook, t['contact:ok'], t['contact:whatsapp'],
   ].filter(Boolean);
-  const isSocialSite = site && /(vk\.com|vkontakte|instagram\.com|facebook\.com|t\.me|ok\.ru|wa\.me|taplink|2gis|yandex\.ru\/maps|google\.[a-z.]+\/maps)/i.test(site);
+  const isSocialSite = !!site && SOCIAL_SITE_RE.test(site);
   const street = [t['addr:street'], t['addr:housenumber']].filter(Boolean).join(', ');
   const address = [t['addr:city'], street].filter(Boolean).join(', ') || t['addr:full'] || '';
   return {
@@ -255,6 +332,39 @@ function normalize(el) {
     hours: t.opening_hours || '',
     site, social, isSocialSite,
     chain: !!(t.brand || t['brand:wikidata'] || t['operator:wikidata']),
+  };
+}
+
+function normalize2gis(it) {
+  if (!it.point || !it.name) return null;
+  const contacts = (it.contact_groups || []).flatMap(g => g.contacts || []);
+  const first = type => contacts.find(c => c.type === type);
+  const siteC = first('website');
+  const site = siteC ? (siteC.text || siteC.value || '') : '';
+  const phoneC = first('phone');
+  const emailC = first('email');
+  const sch = it.schedule;
+  let hours = '';
+  if (sch?.is_24x7) hours = 'круглосуточно';
+  else if (sch) {
+    const day = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].find(d => sch[d]?.working_hours?.length);
+    if (day) hours = sch[day].working_hours.map(h => h.from + '–' + h.to).join(', ') + (sch.Sat || sch.Sun ? '' : ', сб-вс выходной');
+  }
+  const firmId = String(it.id).split('_')[0];
+  return {
+    id: '2gis/' + firmId,
+    gisUrl: 'https://2gis.ru/firm/' + firmId,
+    name: it.name,
+    category: it.rubrics?.find(r => r.kind === 'primary')?.name || it.rubrics?.[0]?.name || '',
+    lat: it.point.lat, lng: it.point.lon,
+    address: it.address_name || '',
+    phone: phoneC ? (phoneC.text || phoneC.value || '') : '',
+    email: emailC ? (emailC.value || emailC.text || '') : '',
+    hours,
+    site,
+    social: contacts.filter(c => SOCIAL_2GIS.includes(c.type)).map(c => c.url || c.value).filter(Boolean),
+    isSocialSite: !!site && SOCIAL_SITE_RE.test(site),
+    chain: (it.org?.branch_count || 1) >= 3,
   };
 }
 
@@ -306,7 +416,7 @@ function linksHtml(x) {
   }
   if (x.site) parts.push(`<a href="${esc(/^https?:/.test(x.site) ? x.site : 'https://' + x.site)}" target="_blank" rel="noopener">${x.isSocialSite ? 'Соцсеть' : '🌐 Сайт'}</a>`);
   parts.push(`<a href="https://yandex.ru/maps/?text=${q}&ll=${x.lng},${x.lat}&z=17" target="_blank" rel="noopener">Яндекс</a>`);
-  parts.push(`<a href="https://2gis.ru/search/${q}" target="_blank" rel="noopener">2ГИС</a>`);
+  parts.push(`<a href="${x.gisUrl || 'https://2gis.ru/search/' + q}" target="_blank" rel="noopener">2ГИС</a>`);
   parts.push(`<a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank" rel="noopener">Google</a>`);
   return parts.join('');
 }
