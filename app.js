@@ -123,6 +123,7 @@ const store = {
 
 let crm = store.get('leads.crm', {});       // { osmId: { status, note } }
 let lastResults = [];                        // нормализованные объекты из последнего поиска
+let lastSource = '';                         // откуда пришли результаты: '2gis' или 'osm'
 
 // ---------- Карта ----------
 
@@ -336,6 +337,7 @@ async function runSearch() {
       : (await overpass(buildQuery(cats, b))).elements.map(normalize);
     const seen = new Set();
     lastResults = raw.filter(x => x && !seen.has(x.id) && seen.add(x.id));
+    lastSource = use2gis ? '2gis' : 'osm';
     $('#csvBtn').disabled = !lastResults.length;
     setStatus('');
     render();
@@ -413,6 +415,7 @@ function normalize2gis(it) {
     ]),
     isSocialSite: !!site && SOCIAL_SITE_RE.test(site),
     chain: (it.org?.branch_count || 1) >= 3,
+    noContactData: !it.contact_groups, // 2ГИС не прислал блок контактов (ограничение ключа)
   };
 }
 
@@ -533,7 +536,7 @@ function render() {
   if (lastResults.length && !$('#status').textContent) {
     const noSite = lastResults.filter(x => !hasRealSite(x, socialOk)).length;
     const writable = lastResults.filter(x => !hasRealSite(x, socialOk) && (x.social.length || isMobile(x.phone) || x.email)).length;
-    $('#stats').innerHTML = `<b>${items.length}</b> найдено<span class="dot">·</span><b>${writable}</b> можно написать`;
+    $('#stats').innerHTML = `<b>${items.length}</b> из ${lastResults.length}<span class="dot">·</span><b>${writable}</b> можно написать`;
     $('#stats').title = `Показано ${items.length}, без сайта ${noSite}, можно написать ${writable}`;
   }
 
@@ -546,9 +549,17 @@ function render() {
   }
 
   const list = $('#list');
-  if (!lastResults.length) return;
-  if (!items.length) { list.innerHTML = '<div class="empty"><div class="empty-ico">🔍</div><h2>Ничего не подходит</h2><p>Ослабьте фильтры или сдвиньте карту</p></div>'; return; }
-  list.innerHTML = items.map(x => {
+  if (!lastResults.length) {
+    list.innerHTML = '<div class="empty"><div class="empty-ico">🔍</div><h2>Здесь ничего не нашлось</h2><p>Выберите другие сферы или сдвиньте карту</p></div>';
+    return;
+  }
+  const banner = noContactsBanner();
+  if (!items.length) {
+    list.innerHTML = banner + `<div class="empty"><div class="empty-ico">🙈</div><h2>Найдено ${lastResults.length}, но всех скрыли фильтры</h2>
+      <p>${hiddenReasons()}</p><button type="button" class="btn primary" data-act="reset" style="margin-top:14px">Показать всех</button></div>`;
+    return;
+  }
+  list.innerHTML = banner + items.map(x => {
     const c = crm[x.id] || {};
     const st = c.status || 'new';
     return `<article class="card st-${st}${c.note ? ' has-note' : ''}" id="c-${x.id.replace('/', '-')}" data-id="${x.id}">
@@ -562,6 +573,27 @@ function render() {
       <textarea class="c-note" data-act="note" placeholder="С кем говорил, когда перезвонить…">${esc(c.note || '')}</textarea>
     </article>`;
   }).join('');
+}
+
+// 2ГИС вернул фирмы без контактов вообще — значит, ключ не даёт к ним доступа.
+function noContactsBanner() {
+  if (lastSource !== '2gis' || !lastResults.length || !lastResults.every(x => x.noContactData)) return '';
+  return `<div class="banner"><b>2ГИС не прислал контакты.</b> Похоже, у вашего ключа нет доступа к телефонам и сайтам
+    (так бывает на демо-ключе). Поэтому нельзя понять, у кого нет сайта и куда писать.
+    Проверяйте фирмы кнопкой «2ГИС» в карточке, переключитесь на OpenStreetMap в настройках
+    или включите доступ к контактам в кабинете platform.2gis.ru.</div>`;
+}
+
+// Почему всё скрыто: считаем, сколько отсекает каждый включённый фильтр.
+function hiddenReasons() {
+  const socialOk = $('#optSocialOk').checked;
+  const r = [];
+  if ($('#optNoSite').checked) r.push(`с сайтом: ${lastResults.filter(x => hasRealSite(x, socialOk)).length}`);
+  if ($('#optMsg').checked) r.push(`некуда написать: ${lastResults.filter(x => !x.social.length && !isMobile(x.phone) && !x.email).length}`);
+  if ($('#optPhone').checked) r.push(`без телефона: ${lastResults.filter(x => !x.phone).length}`);
+  if ($('#optNoChains').checked) r.push(`сетевые: ${lastResults.filter(x => x.chain).length}`);
+  if ($('#optStatus').value) r.push('фильтр по статусу');
+  return r.length ? 'Отсеяно — ' + r.join(', ') : 'Ослабьте фильтры';
 }
 
 function saveCrm(id, patch) {
@@ -582,6 +614,13 @@ $('#list').addEventListener('input', e => {
   if (card && e.target.dataset.act === 'note') saveCrm(card.dataset.id, { note: e.target.value });
 });
 $('#list').addEventListener('click', async e => {
+  if (e.target.dataset.act === 'reset') {
+    ['optNoSite', 'optMsg', 'optPhone'].forEach(id => { $('#' + id).checked = false; });
+    $('#optStatus').value = '';
+    store.set('leads.opts', Object.fromEntries(OPTS.map(o => [o, $('#' + o).checked])));
+    render();
+    return;
+  }
   const card = e.target.closest('.card');
   if (!card) return;
   const x = lastResults.find(r => r.id === card.dataset.id);

@@ -254,3 +254,9 @@ body:not(.src-2gis) .gis-only { display: none; }
   .chips { gap: 5px; }
   .chip span { padding: 5px 10px; font-size: 12.5px; }
 }
+
+.banner {
+  margin-bottom: 10px; padding: 12px 14px; border-radius: var(--r); background: var(--warn-soft); color: var(--text);
+  font-size: 13px; line-height: 1.5;
+}
+.banner b { color: var(--warn); }
