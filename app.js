@@ -418,6 +418,7 @@ async function runSearch() {
       setStatus('Ищу контакты в OpenStreetMap…');
       lastEnrich = { allNo: lastResults.every(x => x.noContactData), matched: await enrichFromOsm(lastResults, b) };
     }
+    store.set('leads.last', { results: lastResults, source: lastSource, enrich: lastEnrich });
     $('#csvBtn').disabled = !lastResults.length;
     setStatus('');
     render();
@@ -831,6 +832,17 @@ $('#csvBtn').addEventListener('click', () => {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 });
+
+// ---------- Результаты прошлого поиска переживают перезагрузку ----------
+
+const saved = store.get('leads.last', null);
+if (saved?.results?.length) {
+  lastResults = saved.results;
+  lastSource = saved.source || '';
+  lastEnrich = saved.enrich || null;
+  $('#csvBtn').disabled = false;
+  render();
+}
 
 // ---------- Установка как приложение ----------
 
