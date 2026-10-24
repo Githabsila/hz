@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Поиск клиентов без сайта</title>
+<meta name="description" content="Парсер карт: находит малый бизнес без сайта по данным OpenStreetMap">
+<meta name="theme-color" content="#1f6feb">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <form id="cityForm" class="city">
+    <input id="cityInput" type="search" placeholder="Город или район, напр. «Казань»" autocomplete="off">
+    <button type="submit" title="Найти город">Найти</button>
+    <button type="button" id="geoBtn" title="Моё местоположение">📍</button>
+  </form>
+  <button id="filtersBtn" class="ghost" type="button">⚙ Фильтры</button>
+</header>
+
+<section id="filters" class="filters">
+  <div class="cats" id="cats"></div>
+  <div class="opts">
+    <label><input type="checkbox" id="optNoSite" checked> Только без сайта</label>
+    <label><input type="checkbox" id="optSocialOk" checked> Соцсети (VK/Instagram) — не сайт</label>
+    <label><input type="checkbox" id="optPhone"> Только с телефоном</label>
+    <label><input type="checkbox" id="optNoChains" checked> Без сетевых брендов</label>
+    <label><input type="checkbox" id="optHideRejected" checked> Скрыть «отказ»</label>
+    <label>Статус:
+      <select id="optStatus">
+        <option value="">все</option>
+      </select>
+    </label>
+  </div>
+  <details class="tpl">
+    <summary>✉ Шаблон сообщения клиенту</summary>
+    <textarea id="tplText" rows="4"></textarea>
+    <small>Переменные: {name} — название, {category} — вид бизнеса, {address} — адрес</small>
+  </details>
+</section>
+
+<div class="actions">
+  <button id="searchBtn" class="primary" type="button">🔍 Искать в видимой области карты</button>
+  <button id="csvBtn" type="button" disabled>⬇ CSV</button>
+  <span id="status" class="status"></span>
+</div>
+
+<nav class="tabs">
+  <button type="button" data-tab="map" class="active">Карта</button>
+  <button type="button" data-tab="list">Список <span id="countBadge"></span></button>
+</nav>
+
+<main class="main">
+  <div id="map" class="pane pane-map active"></div>
+  <div id="list" class="pane pane-list">
+    <p class="empty">Выберите город, отметьте категории и нажмите «Искать».</p>
+  </div>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

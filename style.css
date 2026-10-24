@@ -1,0 +1,87 @@
+:root {
+  --bg: #f6f7f9; --card: #fff; --text: #1b1f24; --muted: #667085; --line: #e3e6ea;
+  --accent: #1f6feb; --accent-text: #fff; --ok: #1a7f37; --warn: #b54708; --bad: #b42318;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0f1216; --card: #171b21; --text: #e6e9ed; --muted: #98a2b3; --line: #2a3038;
+          --accent: #4c8dff; --ok: #3fb950; --warn: #f0a33a; --bad: #f97066; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg); color: var(--text);
+  display: flex; flex-direction: column; height: 100dvh;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button {
+  border: 1px solid var(--line); background: var(--card); border-radius: 8px;
+  padding: 8px 12px; cursor: pointer; white-space: nowrap;
+}
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+button.ghost { background: transparent; }
+input[type=search], select, textarea {
+  border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 8px 10px;
+}
+
+.topbar { display: flex; gap: 8px; padding: 8px 12px; padding-top: max(8px, env(safe-area-inset-top)); }
+.city { display: flex; gap: 6px; flex: 1; min-width: 0; }
+.city input { flex: 1; min-width: 0; }
+
+.filters { padding: 0 12px 8px; display: none; }
+.filters.open { display: block; }
+.cats { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; border: 1px solid var(--line);
+        border-radius: 999px; background: var(--card); cursor: pointer; user-select: none; font-size: 14px; }
+.chip input { display: none; }
+.chip:has(input:checked) { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.opts { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; }
+.opts label { display: inline-flex; align-items: center; gap: 6px; }
+.tpl { margin-top: 8px; font-size: 14px; }
+.tpl textarea { width: 100%; margin-top: 6px; resize: vertical; }
+.tpl small { color: var(--muted); }
+
+.actions { display: flex; gap: 8px; align-items: center; padding: 0 12px 8px; flex-wrap: wrap; }
+.actions .primary { flex: 1 1 260px; }
+.status { color: var(--muted); font-size: 14px; flex-basis: 100%; }
+.status:empty { display: none; }
+
+.tabs { display: flex; border-bottom: 1px solid var(--line); }
+.tabs button { flex: 1; border: 0; border-radius: 0; background: transparent; padding: 10px; border-bottom: 2px solid transparent; }
+.tabs button.active { border-bottom-color: var(--accent); font-weight: 600; }
+
+.main { flex: 1; min-height: 0; position: relative; }
+.pane { position: absolute; inset: 0; display: none; }
+.pane.active { display: block; }
+.pane-list { overflow-y: auto; padding: 8px 12px calc(16px + env(safe-area-inset-bottom)); }
+.empty { color: var(--muted); text-align: center; margin-top: 40px; }
+
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+.card.focus { outline: 2px solid var(--accent); }
+.card h3 { margin: 0 0 2px; font-size: 16px; }
+.card .meta { color: var(--muted); font-size: 13px; }
+.card .row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+.card .row a, .card .row button { font-size: 13px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px;
+  text-decoration: none; color: var(--text); background: var(--bg); }
+.card .row a.call { background: var(--ok); border-color: var(--ok); color: #fff; }
+.card textarea { width: 100%; margin-top: 8px; font-size: 13px; resize: vertical; min-height: 34px; }
+.tag { display: inline-block; font-size: 12px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); margin-right: 4px; }
+.tag.site { color: var(--bad); border-color: var(--bad); }
+.tag.nosite { color: var(--ok); border-color: var(--ok); }
+.tag.social { color: var(--warn); border-color: var(--warn); }
+.st-new { } .st-contacted { border-left: 4px solid var(--warn); } .st-interested { border-left: 4px solid var(--accent); }
+.st-client { border-left: 4px solid var(--ok); } .st-rejected { opacity: .55; }
+
+.leaflet-popup-content { font-size: 14px; }
+.leaflet-popup-content a { cursor: pointer; }
+
+/* ПК: карта и список рядом */
+@media (min-width: 900px) {
+  .filters { display: block; }
+  #filtersBtn { display: none; }
+  .tabs { display: none; }
+  .main { display: grid; grid-template-columns: 1fr 440px; }
+  .pane { position: relative; display: block; }
+  .pane-list { border-left: 1px solid var(--line); }
+}
