@@ -1,5 +1,5 @@
 // Кэширует только оболочку приложения; запросы к картам/API всегда идут в сеть.
-const CACHE = 'leads-v10';
+const CACHE = 'leads-v11';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', e => {

@@ -49,6 +49,25 @@ const QUERIES = {
   allshops: ['Магазины'],
   allcraft: ['Мастерские', 'Изготовление на заказ'],
 };
+// TomTom ищет по всему миру — запросы по-английски.
+const QUERIES_EN = {
+  beauty: ['hair salon', 'beauty salon', 'nail salon', 'barber', 'massage', 'tattoo', 'cosmetology'],
+  auto: ['car repair', 'tyre service', 'car wash', 'auto parts', 'body shop'],
+  food: ['cafe', 'restaurant', 'fast food', 'coffee shop', 'bar', 'sushi', 'pizza'],
+  foodshop: ['bakery', 'pastry shop', 'butcher', 'fish market', 'grocery store'],
+  flowers: ['florist', 'gift shop'],
+  repair: ['phone repair', 'appliance repair', 'computer repair', 'dry cleaning', 'shoe repair', 'tailor', 'key cutting', 'photo studio'],
+  build: ['building materials', 'furniture', 'windows', 'doors', 'renovation', 'plumber', 'kitchen design'],
+  health: ['dentist', 'medical clinic', 'optician', 'psychologist', 'physiotherapy'],
+  pets: ['veterinarian', 'pet shop', 'pet grooming'],
+  sport: ['gym', 'yoga', 'dance school', 'martial arts'],
+  edu: ['driving school', 'language school', 'tutoring', 'kindergarten', 'training center'],
+  hotel: ['hotel', 'hostel', 'guest house'],
+  clothes: ['clothing store', 'shoe store', 'jewelry', 'bridal shop', 'second hand'],
+  office: ['lawyer', 'accountant', 'real estate agency', 'insurance', 'travel agency', 'cleaning service'],
+  allshops: ['shop'],
+  allcraft: ['workshop'],
+};
 // Типы контактов 2ГИС -> наши типы мессенджеров/соцсетей.
 const SOCIAL_2GIS = { telegram: 'telegram', whatsapp: 'whatsapp', viber: 'viber', vkontakte: 'vk', instagram: 'instagram', odnoklassniki: 'ok', facebook: 'facebook', youtube: 'youtube', twitter: 'other' };
 // Теги OSM с мессенджерами/соцсетями.
@@ -160,19 +179,21 @@ $('#optSource').value = src.source;
 document.querySelector(`input[name=src][value="${src.source}"]`).checked = true;
 $('#gisKey').value = src.key;
 $('#yaKey').value = src.yaKey;
+$('#ttKey').value = src.ttKey || '';
 $('#gisPages').value = src.pages;
 // Ключ можно передать ссылкой вида #ya=КЛЮЧ или #2gis=КЛЮЧ: он сохраняется в браузере, а из адреса убирается.
 const hashKeys = new URLSearchParams(location.hash.slice(1));
 if (hashKeys.get('ya')) { $('#yaKey').value = hashKeys.get('ya'); document.querySelector('input[name=src][value="yandex"]').checked = true; }
 if (hashKeys.get('2gis')) { $('#gisKey').value = hashKeys.get('2gis'); if (!hashKeys.get('ya')) document.querySelector('input[name=src][value="2gis"]').checked = true; }
-if (hashKeys.get('ya') || hashKeys.get('2gis')) history.replaceState(null, '', location.pathname + location.search);
+if (hashKeys.get('tt')) { $('#ttKey').value = hashKeys.get('tt'); document.querySelector('input[name=src][value="tomtom"]').checked = true; }
+if (hashKeys.get('ya') || hashKeys.get('2gis') || hashKeys.get('tt')) history.replaceState(null, '', location.pathname + location.search);
 function saveSrc() {
   $('#optSource').value = document.querySelector('input[name=src]:checked').value;
   const source = $('#optSource').value;
-  store.set('leads.src', { source, key: $('#gisKey').value.trim(), yaKey: $('#yaKey').value.trim(), pages: +$('#gisPages').value || 1 });
-  for (const v of ['2gis', 'yandex', 'osm']) document.body.classList.toggle('src-' + v, source === v);
+  store.set('leads.src', { source, key: $('#gisKey').value.trim(), yaKey: $('#yaKey').value.trim(), ttKey: $('#ttKey').value.trim(), pages: +$('#gisPages').value || 1 });
+  for (const v of ['2gis', 'yandex', 'tomtom', 'osm']) document.body.classList.toggle('src-' + v, source === v);
 }
-['#gisKey', '#yaKey', '#gisPages'].forEach(id => $(id).addEventListener('change', saveSrc));
+['#gisKey', '#yaKey', '#ttKey', '#gisPages'].forEach(id => $(id).addEventListener('change', saveSrc));
 document.querySelectorAll('input[name=src]').forEach(r => r.addEventListener('change', saveSrc));
 saveSrc();
 
@@ -381,6 +402,32 @@ async function searchYandex(queries, b, key, maxPages) {
   return out;
 }
 
+async function searchTomtom(queries, b, key, maxPages) {
+  const out = [];
+  for (const [qi, q] of queries.entries()) {
+    for (let page = 0; page < maxPages; page++) {
+      setStatus(`${q} · ${qi + 1}/${queries.length} · найдено ${out.length}`);
+      const params = new URLSearchParams({
+        key, idxSet: 'POI', limit: 100, ofs: page * 100, language: 'en-GB',
+        topLeft: `${b.getNorth().toFixed(5)},${b.getWest().toFixed(5)}`, btmRight: `${b.getSouth().toFixed(5)},${b.getEast().toFixed(5)}`,
+      });
+      const res = await fetch(`https://api.tomtom.com/search/2/search/${encodeURIComponent(q)}.json?` + params);
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { errorText: text.replace(/<[^>]+>/g, ' ').trim().slice(0, 200) }; }
+      if (!res.ok) {
+        const msg = data.errorText || data.detailedError?.message || data.error || res.status;
+        if (res.status === 403 || res.status === 401) throw new Error('ключ TomTom не принят или кончился дневной лимит (' + msg + ')');
+        throw new Error('TomTom вернул ошибку: ' + msg);
+      }
+      const items = data.results || [];
+      out.push(...items);
+      if (items.length < 100) break;
+    }
+  }
+  return out;
+}
+
 $('#searchBtn').addEventListener('click', runSearch);
 
 async function runSearch() {
@@ -388,18 +435,18 @@ async function runSearch() {
   if (!cats.length) { setStatus('Выберите хотя бы одну сферу', true); return; }
   const b = map.getBounds();
   const source = $('#optSource').value;
-  const use2gis = source === '2gis', useYa = source === 'yandex';
-  const key = use2gis ? $('#gisKey').value.trim() : $('#yaKey').value.trim();
-  if ((use2gis || useYa) && !key) {
-    setStatus(`Нужен ключ ${useYa ? 'Яндекса' : '2ГИС'} — вставьте его в настройках`, true);
+  const use2gis = source === '2gis', useYa = source === 'yandex', useTt = source === 'tomtom';
+  const key = use2gis ? $('#gisKey').value.trim() : useTt ? $('#ttKey').value.trim() : $('#yaKey').value.trim();
+  if (source !== 'osm' && !key) {
+    setStatus(`Нужен ключ ${useYa ? 'Яндекса' : useTt ? 'TomTom' : '2ГИС'} — вставьте его в настройках`, true);
     openSettings();
     return;
   }
-  const queries = [...new Set(cats.flatMap(c => QUERIES[c.id] || []))];
+  const queries = [...new Set(cats.flatMap(c => (useTt ? QUERIES_EN : QUERIES)[c.id] || []))];
   const pages = Math.max(1, Math.min(20, +$('#gisPages').value || 1));
   const area = (b.getNorth() - b.getSouth()) * (b.getEast() - b.getWest());
   if (source === 'osm' && area > 1.5 && !confirm('Область очень большая — поиск может занять минуту. Продолжить?')) return;
-  const limitHint = useYa ? 'бесплатный дневной лимит Яндекса' : 'лимит ключа 2ГИС';
+  const limitHint = useYa ? 'бесплатный дневной лимит Яндекса' : useTt ? 'бесплатный дневной лимит TomTom' : 'лимит ключа 2ГИС';
   if (!(source === 'osm') && queries.length * pages > 60 &&
       !confirm(`До ${queries.length * pages} запросов — это расходует ${limitHint}. Продолжить?`)) return;
 
@@ -408,6 +455,7 @@ async function runSearch() {
   try {
     const raw = use2gis ? (await search2gis(queries, b, key, pages)).map(normalize2gis).filter(x => x && b.contains([x.lat, x.lng]))
       : useYa ? (await searchYandex(queries, b, key, pages)).map(normalizeYa).filter(x => x && b.contains([x.lat, x.lng]))
+      : useTt ? (await searchTomtom(queries, b, key, pages)).map(normalizeTomtom).filter(x => x && b.contains([x.lat, x.lng]))
       : (await overpass(buildQuery(cats, b))).elements.map(normalize);
     const seen = new Set();
     lastResults = raw.filter(x => x && !seen.has(x.id) && seen.add(x.id));
@@ -519,11 +567,13 @@ function uniqSocial(list) {
 
 // Российский мобильный (+7 9xx…) — на него обычно есть WhatsApp/Telegram.
 const isMobile = phone => /^79\d{9}$/.test(waNumber(phone || ''));
+// За границей не отличить мобильный от городского, поэтому WhatsApp предлагаем по любому номеру.
+const canWa = x => isMobile(x.phone) || (!!x.intl && waNumber(x.phone || '').length >= 8);
 
 // Куда можно написать: найденные в базе мессенджеры + догадки по мобильному номеру.
 function messengers(x) {
   const list = [...x.social];
-  if (isMobile(x.phone)) {
+  if (canWa(x)) {
     const n = waNumber(x.phone);
     if (!list.some(s => s.type === 'whatsapp')) list.push({ type: 'whatsapp', url: 'https://wa.me/' + n, guess: true });
     if (!list.some(s => s.type === 'telegram')) list.push({ type: 'telegram', url: 'https://t.me/+' + n, guess: true });
@@ -555,6 +605,29 @@ function normalizeYa(f) {
   };
 }
 
+function normalizeTomtom(r) {
+  const p = r.poi;
+  if (!p?.name || !r.position) return null;
+  const site = p.url || '';
+  const isSocialSite = !!site && SOCIAL_SITE_RE.test(site);
+  const address = r.address?.freeformAddress || '';
+  return {
+    id: 'tt/' + r.id,
+    gUrl: 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(p.name + ' ' + address),
+    intl: true,
+    name: p.name,
+    category: p.categories?.[0] || p.classifications?.[0]?.names?.[0]?.name || '',
+    lat: r.position.lat, lng: r.position.lon,
+    address,
+    phone: p.phone || '',
+    email: '',
+    hours: '',
+    site, isSocialSite,
+    social: uniqSocial([isSocialSite ? socialLink('other', site) : null]),
+    chain: !!p.brands?.length,
+  };
+}
+
 function hasRealSite(x, socialOk) {
   if (!x.site) return false;
   return !(socialOk && x.isSocialSite);
@@ -567,7 +640,7 @@ function filtered() {
   return lastResults.filter(x => {
     if (noSite && hasRealSite(x, socialOk)) return false;
     if (phone && !x.phone) return false;
-    if (canWrite && !x.social.length && !isMobile(x.phone) && !x.email) return false;
+    if (canWrite && !x.social.length && !canWa(x) && !x.email) return false;
     if (noChains && x.chain) return false;
     const s = crm[x.id]?.status || 'new';
     if (hideRej && s === 'rejected' && st !== 'rejected') return false;
@@ -577,7 +650,7 @@ function filtered() {
 }
 
 // Чем больше контактов — тем «теплее» лид (до него проще достучаться).
-function score(x) { return (x.social.length ? 4 : 0) + (x.phone ? 3 : 0) + (isMobile(x.phone) ? 1 : 0) + (x.email ? 1 : 0) + (x.hours ? 1 : 0); }
+function score(x) { return (x.social.length ? 4 : 0) + (x.phone ? 3 : 0) + (canWa(x) ? 1 : 0) + (x.email ? 1 : 0) + (x.hours ? 1 : 0); }
 
 // ---------- Отрисовка ----------
 
@@ -619,8 +692,11 @@ function linksHtml(x) {
   const q = encodeURIComponent(x.name + (x.address ? ' ' + x.address : ''));
   const parts = [];
   if (x.site && !x.isSocialSite) parts.push(`<a class="site" href="${esc(/^https?:/.test(x.site) ? x.site : 'https://' + x.site)}" target="_blank" rel="noopener">Сайт ↗</a>`);
-  parts.push(`<a href="${x.yaUrl || `https://yandex.ru/maps/?text=${q}&ll=${x.lng},${x.lat}&z=17`}" target="_blank" rel="noopener">Яндекс</a>`);
-  parts.push(`<a href="${x.gisUrl || 'https://2gis.ru/search/' + q}" target="_blank" rel="noopener">2ГИС</a>`);
+  if (x.gUrl) parts.push(`<a href="${esc(x.gUrl)}" target="_blank" rel="noopener">Google Карты</a>`);
+  else {
+    parts.push(`<a href="${x.yaUrl || `https://yandex.ru/maps/?text=${q}&ll=${x.lng},${x.lat}&z=17`}" target="_blank" rel="noopener">Яндекс</a>`);
+    parts.push(`<a href="${x.gisUrl || 'https://2gis.ru/search/' + q}" target="_blank" rel="noopener">2ГИС</a>`);
+  }
   parts.push(`<button type="button" data-act="show">На карте</button>`);
   parts.push(`<button type="button" data-act="copy">Копировать</button>`);
   parts.push(`<button type="button" data-act="note">Заметка</button>`);
@@ -642,7 +718,7 @@ function render() {
   $('#countBadge').textContent = lastResults.length ? items.length : '';
   if (lastResults.length && !$('#status').textContent) {
     const noSite = lastResults.filter(x => !hasRealSite(x, socialOk)).length;
-    const writable = lastResults.filter(x => !hasRealSite(x, socialOk) && (x.social.length || isMobile(x.phone) || x.email)).length;
+    const writable = lastResults.filter(x => !hasRealSite(x, socialOk) && (x.social.length || canWa(x) || x.email)).length;
     $('#stats').innerHTML = `<b>${items.length}</b> из ${lastResults.length}<span class="dot">·</span><b>${writable}</b> можно написать`;
     $('#stats').title = `Показано ${items.length}, без сайта ${noSite}, можно написать ${writable}`;
   }
@@ -724,7 +800,7 @@ function hiddenReasons() {
   const socialOk = $('#optSocialOk').checked;
   const r = [];
   if ($('#optNoSite').checked) r.push(`с сайтом: ${lastResults.filter(x => hasRealSite(x, socialOk)).length}`);
-  if ($('#optMsg').checked) r.push(`некуда написать: ${lastResults.filter(x => !x.social.length && !isMobile(x.phone) && !x.email).length}`);
+  if ($('#optMsg').checked) r.push(`некуда написать: ${lastResults.filter(x => !x.social.length && !canWa(x) && !x.email).length}`);
   if ($('#optPhone').checked) r.push(`без телефона: ${lastResults.filter(x => !x.phone).length}`);
   if ($('#optNoChains').checked) r.push(`сетевые: ${lastResults.filter(x => x.chain).length}`);
   if ($('#optStatus').value) r.push('фильтр по статусу');

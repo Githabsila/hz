@@ -89,9 +89,10 @@
       <div class="segctl">
         <label><input type="radio" name="src" value="yandex"><span>Яндекс</span></label>
         <label><input type="radio" name="src" value="2gis"><span>2ГИС</span></label>
-        <label><input type="radio" name="src" value="osm"><span>OpenStreetMap</span></label>
+        <label><input type="radio" name="src" value="tomtom"><span>TomTom</span></label>
+        <label><input type="radio" name="src" value="osm"><span>OSM</span></label>
       </div>
-      <select id="optSource" hidden><option value="yandex"></option><option value="2gis"></option><option value="osm"></option></select>
+      <select id="optSource" hidden><option value="yandex"></option><option value="2gis"></option><option value="tomtom"></option><option value="osm"></option></select>
     </div>
 
     <div class="field ya-only">
@@ -101,6 +102,10 @@
     <div class="field gis-only">
       <span class="lbl">Ключ API 2ГИС <a href="https://platform.2gis.ru/" target="_blank" rel="noopener">получить</a></span>
       <input id="gisKey" class="inp" type="password" placeholder="xxxxxxxx-xxxx-…" autocomplete="off">
+    </div>
+    <div class="field tt-only">
+      <span class="lbl">Ключ TomTom <small>для поиска за пределами России</small> <a href="https://developer.tomtom.com/user/register" target="_blank" rel="noopener">получить</a></span>
+      <input id="ttKey" class="inp" type="password" placeholder="ключ из раздела Keys" autocomplete="off">
     </div>
     <div class="field key-only">
       <span class="lbl">Глубина поиска <small>страниц на запрос, тратит лимит ключа</small></span>

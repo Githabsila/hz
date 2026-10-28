@@ -226,6 +226,7 @@ textarea.inp { resize: vertical; line-height: 1.45; }
 .segctl input:checked + span { background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
 body:not(.src-2gis) .gis-only { display: none; }
 body:not(.src-yandex) .ya-only { display: none; }
+body:not(.src-tomtom) .tt-only { display: none; }
 body.src-osm .key-only { display: none; }
 .sw { display: flex; align-items: center; gap: 10px; padding: 7px 0; cursor: pointer; }
 .sw input { display: none; }
