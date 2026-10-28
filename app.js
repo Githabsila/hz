@@ -132,6 +132,10 @@ const STATUSES = [
 const DEFAULT_TPL = 'Здравствуйте! Нашёл «{name}» на карте и заметил, что у вас пока нет своего сайта. ' +
   'Я делаю сайты для малого бизнеса — быстро и недорого, с записью/заказом онлайн и выходом в поиск Яндекса и Google. ' +
   'Могу показать примеры и сделать бесплатный макет. Интересно?';
+// Зарубежным фирмам (источник TomTom) пишем по-английски.
+const DEFAULT_TPL_EN = 'Hello! I came across {name} on the map and noticed you don\'t have a website yet. ' +
+  'I build websites for small businesses — fast and affordable, with online booking/ordering and visibility in Google search. ' +
+  'I can show you examples and make a free mockup. Would you be interested?';
 
 // ---------- Хранилище (localStorage может быть недоступен) ----------
 
@@ -210,6 +214,8 @@ $('#optStatus').addEventListener('change', render);
 
 $('#tplText').value = store.get('leads.tpl', DEFAULT_TPL);
 $('#tplText').addEventListener('input', e => store.set('leads.tpl', e.target.value));
+$('#tplTextEn').value = store.get('leads.tplEn', DEFAULT_TPL_EN);
+$('#tplTextEn').addEventListener('input', e => store.set('leads.tplEn', e.target.value));
 
 const openSettings = () => $('#filters').showModal();
 $('#filtersBtn').addEventListener('click', openSettings);
@@ -659,7 +665,7 @@ const digits = p => p.replace(/[^\d+]/g, '');
 const waNumber = p => { let d = p.replace(/\D/g, ''); if (d.length === 11 && d[0] === '8') d = '7' + d.slice(1); return d; };
 
 function fillTpl(x) {
-  return $('#tplText').value
+  return $(x.intl ? '#tplTextEn' : '#tplText').value
     .replaceAll('{name}', x.name).replaceAll('{category}', x.category.toLowerCase()).replaceAll('{address}', x.address);
 }
 
@@ -682,7 +688,7 @@ function contactsHtml(x) {
     const title = m.guess ? 'Нет в базе — пробуем по мобильному номеру' : m.url;
     parts.push(`<a class="mb m-${m.type}${m.guess ? ' guess' : ''}" data-act="msg" href="${esc(href)}" title="${esc(title)}" target="_blank" rel="noopener">${ICONS[m.type] || ''}${MESSENGERS[m.type].label}${m.guess ? '<sup>?</sup>' : ''}</a>`);
   }
-  if (x.email) parts.push(`<a class="mb m-email" data-act="msg" href="mailto:${esc(x.email)}?subject=${encodeURIComponent('Сайт для ' + x.name)}&body=${encodeURIComponent(fillTpl(x))}" title="${esc(x.email)}">${ICONS.email}Email</a>`);
+  if (x.email) parts.push(`<a class="mb m-email" data-act="msg" href="mailto:${esc(x.email)}?subject=${encodeURIComponent((x.intl ? 'A website for ' : 'Сайт для ') + x.name)}&body=${encodeURIComponent(fillTpl(x))}" title="${esc(x.email)}">${ICONS.email}Email</a>`);
   if (x.phone) parts.push(`<a class="mb m-phone" href="tel:${esc(digits(x.phone))}">${ICONS.phone}${esc(x.phone)}</a>`);
   if (!parts.length) return `<div class="c-contacts"><a class="mb m-2gis" href="${esc(x.gisUrl || 'https://2gis.ru/search/' + encodeURIComponent(x.name))}" target="_blank" rel="noopener">Контакты в 2ГИС ↗</a></div>`;
   return `<div class="c-contacts">${parts.join('')}</div>`;
